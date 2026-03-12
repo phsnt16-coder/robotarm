@@ -1,3 +1,4 @@
+<!-- ================= 3D URDF 파일 ================= -->
 <?xml version="1.0"?>
 <robot name="packing_robot_corrected">
 
@@ -197,4 +198,5 @@
     <limit lower="-2.6" upper="2.6" effort="12" velocity="1.5"/>
     <mimic joint="joint6_fingerA" multiplier="-1"/>
   </joint>
+
 </robot>
