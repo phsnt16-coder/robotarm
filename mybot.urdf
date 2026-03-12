@@ -1,0 +1,200 @@
+<?xml version="1.0"?>
+<robot name="packing_robot_corrected">
+
+<!-- ================= BASE MOUNT (5.6cm) ================= -->
+<link name="base_link">
+  <visual>
+    <origin xyz="0 0 0"/>
+    <geometry>
+      <mesh filename="C:\Users\phsnt\Desktop\3dbot\Swanky Stantia-Gaaris.stl"
+            scale="0.001 0.001 0.001"/>
+    </geometry>
+  </visual>
+
+  <collision>
+    <origin xyz="0 0 0.028"/>
+    <geometry>
+      <box size="0.1 0.1 0.056"/>
+    </geometry>
+  </collision>
+</link>
+  <!-- ================= SHOULDER MOUNT (6.5cm) ================= -->
+  <link name="link1_shoulder_mount">
+    <visual>
+      <origin xyz="-0.002 -0.002 0"/>
+      <geometry>
+        <mesh filename="C:\Users\phsnt\Desktop\3dbot\Swanky Stantia-Gaaris1.stl"
+              scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+
+   <collision>
+      <origin xyz="0 0 0.035"/>
+      <geometry>
+          <box size="0.1 0.1 0.065"/>
+      </geometry>
+   </collision>
+  </link>
+
+  <joint name="joint1_base_yaw" type="revolute">
+    <parent link="base_link"/>
+    <child link="link1_shoulder_mount"/>
+    <origin xyz="0 0 0.056"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.14" upper="3.14" effort="20" velocity="2.0"/>
+  </joint>
+
+  <!-- ================= UPPER ARM (17.1cm) ================= -->
+  <link name="link2_upper_arm">
+    <visual>
+      <origin xyz="-0.01 0 -0.0275"/>
+      <geometry>
+        <mesh filename="C:\Users\phsnt\Desktop\3dbot\Swanky Stantia-Gaaris2.stl"
+              scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="-0.01 0 0.05"/>
+      <geometry>
+        <box size="0.02 0.04 0.171"/>
+      </geometry>
+   </collision>
+  </link>
+
+  <joint name="joint2_shoulder" type="revolute">
+    <parent link="link1_shoulder_mount"/>
+    <child link="link2_upper_arm"/>
+    <origin xyz="0 -0.015 0.045"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-1.57" upper="1.57" effort="15" velocity="1.5"/>
+  </joint> 
+
+  <!-- ================= FOREARM (11.5cm) ================= -->
+  <link name="link3_forearm">
+    <visual>
+      <origin xyz="0.01 0.0057 -0.025"/>      
+      <geometry>
+        <mesh filename="C:\Users\phsnt\Desktop\3dbot\Swanky Stantia-Gaaris3.stl"
+              scale="0.001 0.001 0.001"/>
+      </geometry>
+
+    </visual>
+    <collision>
+      <origin xyz="0.01 0.0057 0.0325"/>  
+      <geometry>
+        <box size="0.02 0.04 0.115"/>
+      </geometry>
+   </collision>
+  </link>
+
+  <joint name="joint3_elbow" type="revolute">
+    <parent link="link2_upper_arm"/>
+    <child link="link3_forearm"/>
+    <origin xyz="0 -0.005 0.121"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-2.6" upper="2.6" effort="12" velocity="1.5"/>
+  </joint>
+
+  <!-- ================= WHRISTARM (4.6cm) ================= -->
+
+  <link name="link4_whristarm">
+    <visual>
+      <origin xyz="-0.001 -0.0005 0.025"/>      
+      <geometry>
+        <mesh filename="C:\Users\phsnt\Desktop\3dbot\Swanky Stantia-Gaaris4.stl"
+              scale="0.001 0.001 0.001"/>
+      </geometry>
+
+    </visual>
+    <collision>
+      <origin xyz="-0.001 -0.0005 0.048"/>
+      <geometry>
+        <box size="0.03 0.03 0.046"/>
+      </geometry>
+   </collision>
+  </link>
+
+  <joint name="joint4_whrist" type="revolute">
+    <parent link="link3_forearm"/>
+    <child link="link4_whristarm"/>
+    <origin xyz="0.01 0 0.065"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.14" upper="3.14" effort="20" velocity="2.0"/>
+  </joint>
+
+  <!-- ================= HAND (7.7cm) ================= -->
+
+  <link name="link5_hand">
+    <visual>
+      <origin xyz="-0.001 0.0005 -0.028"/>      
+      <geometry>
+        <mesh filename="C:\Users\phsnt\Desktop\3dbot\Swanky Stantia-Gaaris5.stl"
+              scale="0.001 0.001 0.001"/>
+      </geometry>
+
+    </visual>
+    <collision>
+      <origin xyz="-0.01 0.0005 0.029"/>
+      <geometry>
+        <box size="0.045 0.03 0.038"/>
+      </geometry>
+   </collision>
+  </link>
+
+  <joint name="joint5_hand" type="revolute">
+    <parent link="link4_whristarm"/>
+    <child link="link5_hand"/>
+    <origin xyz="-0.001 -0.001 0.053"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-2.6" upper="2.6" effort="12" velocity="1.5"/>
+  </joint>
+  <!-- ================= FINGER (11cm) ================= -->
+  <link name="link6_fingerA">
+    <visual>
+      <origin xyz="0.021 0.0005 -0.0655"/>      
+      <geometry>
+        <mesh filename="C:\Users\phsnt\Desktop\3dbot\Fantastic Sango-Jaiks6.stl"
+              scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    
+    <collision>
+      <origin xyz="0 -0.015 0.04"/>
+      <geometry>
+        <box size="0.016 0.008 0.1"/>
+      </geometry>
+   </collision>
+  </link>
+    <joint name="joint6_fingerA" type="revolute">
+    <parent link="link5_hand"/>
+    <child link="link6_fingerA"/>
+    <origin xyz="-0.021 -0.001 0.038"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.6" upper="2.6" effort="12" velocity="1.5"/>
+  </joint>
+
+    <link name="link7_fingerB">
+    <visual>
+      <origin xyz="-0.005 0.0005 -0.0655"/>      
+      <geometry>
+        <mesh filename="C:\Users\phsnt\Desktop\3dbot\Fantastic Sango-Jaiks7.stl"
+              scale="0.001 0.001 0.001"/>
+      </geometry>
+
+    </visual>
+    <collision>
+      <origin xyz="0 -0.015 0.04"/>
+      <geometry>
+        <box size="0.016 0.008 0.1"/>
+      </geometry>
+   </collision>
+  </link>
+    <joint name="joint7_fingerB" type="revolute">
+    <parent link="link5_hand"/>
+    <child link="link7_fingerB"/>
+    <origin xyz="0.005 -0.001 0.038"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.6" upper="2.6" effort="12" velocity="1.5"/>
+    <mimic joint="joint6_fingerA" multiplier="-1"/>
+  </joint>
+</robot>
