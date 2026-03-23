@@ -81,9 +81,9 @@ def live_video_correction(calibration_data):
     
     # 2. Picamera2 설정 (라즈베리 파이 전용)
     picam2 = Picamera2()
-    # 캘리브레이션 사진 찍을 때와 동일한 해상도와 화각 모드를 설정해야 합니다.
+    # 캘리브레이션 사진 찍을 때와 동일한 해상도와 화각 모드를 설정.
     config = picam2.create_video_configuration(main={"size": (640, 480), "format": "RGB888"})
-    config["sensor_mode"] = 4  # 전체 화각 모드 강제 (사진 찍을 때 썼던 모드)
+
     picam2.configure(config)
     picam2.start()
     
@@ -111,7 +111,6 @@ def live_video_correction(calibration_data):
                 dst = dst[y:y+h_roi, x:x+w_roi]
             
             # 6. 화면 비교를 위해 리사이즈 및 결합
-            # 보정 후 잘려나간 dst를 다시 원본 크기에 맞춰야 비교가 쉽습니다.
             dst_resized = cv2.resize(dst, (640, 480))
             combined = np.hstack((frame, dst_resized))
             
