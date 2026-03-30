@@ -1,228 +1,128 @@
+import multiprocessing as mp
+import serial
+import time
+import cv2
+import numpy as np
+import pickle
+from picamera2 import Picamera2
+from ultralytics import YOLO
 import itertools
 
-# Item Class
-
-
-class Item:
-    def __init__(self, name, w, h, d, weight=1):
-        self.name = name
-        self.w = w
-        self.h = h
-        self.d = d
-        self.weight = weight
-
-
-        self.x = None
-        self.y = None
-        self.z = None
-
-
-    def set_position(self, x, y, z):
-        self.x = x
-        self.y = y
-        self.z = z
-
-
-
-
-# -------------------------
-# LiveBin Class
-# -------------------------
-class LiveBin:
-    def __init__(self, W, H, D, max_weight=9999):
-        self.W = W
-        self.H = H
-        self.D = D
-        self.max_weight = max_weight
-
-
-        self.current_weight = 0
-        self.placed_items = []
-        self.extreme_points = [(0, 0, 0)]
-
-
-
-
-    # AABB 충돌 판정
-    def check_collision(self, item, x, y, z):
-        for placed in self.placed_items:
-            if not (
-                x + item.w <= placed.x or
-                placed.x + placed.w <= x or
-                y + item.d <= placed.y or
-                placed.y + placed.d <= y or
-                z + item.h <= placed.z or
-                placed.z + placed.h <= z
-            ):
-                return True
-        return False
-
-
-
-
-    # 컨테이너 범위 검사
-    def fits_in_container(self, item, x, y, z):
-        return (
-            x + item.w <= self.W and
-            y + item.d <= self.D and
-            z + item.h <= self.H
-        )
-
-
-# 안정성 검사: 바닥(z=0)에 닿아 있거나, 아래에 다른 아이템이 있는지 확인
-    def is_stable(self, item, x, y, z):
-        if z == 0:
-            return True  # 바닥에 직접 놓이는 경우 안전함
-        
-        # 아이템의 바닥면 면적 계산
-        item_bottom_area = item.w * item.d
-        support_area = 0
-        
-        for placed in self.placed_items:
-            # 배치된 아이템의 윗면이 현재 아이템의 바닥면 높이(z)와 일치하는지 확인
-            if abs((placed.z + placed.h) - z) < 1e-5:
-                # x, y 평면에서 겹치는 영역(서포트 영역) 계산
-                inter_w = max(0, min(x + item.w, placed.x + placed.w) - max(x, placed.x))
-                inter_d = max(0, min(y + item.d, placed.y + placed.d) - max(y, placed.y))
-                support_area += inter_w * inter_d
-        
-        # 아래쪽 아이템들이 현재 아이템 바닥 면적의 50% 이상을 받쳐주고 있는가?   
-        return support_area >= (item_bottom_area * 0.5)
-
-    # BLF 점수
-    def calculate_score(self, x, y, z):
-        return z * 10000 + y * 100 + x
-
-
-
-
-    # 아이템 배치
-    def place_item(self, item):
-        gap=1 #아이템간 간격
-
-        if self.current_weight + item.weight > self.max_weight:
-            return False
-
-
-        best_position = None
-        best_score = float("inf")
-
-
-        rotations = set(itertools.permutations([item.w, item.h, item.d]))
-
-
-        for (rw, rh, rd) in rotations:
-            for (x, y, z) in self.extreme_points:
-
-
-                temp_item = Item(item.name, rw+gap, rh+gap, rd, item.weight)
-
-
-                if not self.fits_in_container(temp_item, x, y, z):
-                    continue
-
-
-                if self.check_collision(temp_item, x, y, z):
-                    continue
-
-
-                score = self.calculate_score(x, y, z)
-
-
-                if score < best_score:
-                    best_score = score
-                    best_position = (x, y, z, rw, rh, rd)
-
-
-        if best_position is None:
-            return False
-
-
-        x, y, z, rw, rh, rd = best_position
-        item.w, item.h, item.d = rw, rh, rd
-        item.set_position(x, y, z)
-
-
-        self.placed_items.append(item)
-        self.current_weight += item.weight
-
-
-        self.update_extreme_points(item)
-
-
-        return True
-
-
-
-
-    # Extreme Point 업데이트
-    def update_extreme_points(self, item):
-        new_points = [
-            (item.x + item.w, item.y, item.z),
-            (item.x, item.y + item.d, item.z),
-            (item.x, item.y, item.z + item.h),
-        ]
-
-
-        for p in new_points:
-            if p not in self.extreme_points:
-                self.extreme_points.append(p)
-
-
-
-
-    def print_state(self):
-        print("\n현재 적재 상태:")
-        for item in self.placed_items:
-            print(f"{item.name} → pos=({item.x},{item.y},{item.z}) "
-                  f"size=({item.w},{item.h},{item.d})")
-        print("총 적재 무게:", self.current_weight)
-
-
-
-
-
-
-# 실시간 입력 루프
-if __name__ == "__main__":
-
-
-    bin = LiveBin(10, 10, 10, max_weight=100)
-
-
-    print("=== 실시간 3D 적재 시스템 ===")
-    print("입력 형식: name,width,height,depth,weight")
-    print("종료: Q")
-
-
-    while True:
-        user_input = input("\nItem 입력: ")
-
-
-        if user_input.upper() == "Q":
-            break
-
-
-        try:
-            name, w, h, d, weight = user_input.split(",")
-            item = Item(name.strip(),
-                        float(w),
-                        float(h),
-                        float(d),
-                        float(weight))
-
-
-            success = bin.place_item(item)
-
-
-            if success:
-                print(f"[성공] {item.name} → ({item.x},{item.y},{item.z}) 배치됨")
-            else:
-                print(f"[실패] {item.name} 적재 불가")
-
-
-            bin.print_state()
-
-
-        except:
-            print("입력 형식 오류. 예: A,5,5,5,1")
+from py3Dbp import Item, LiveBin
+
+
+# 비전 처리 보조 함수
+def get_short_edge_center(roi):
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edged = cv2.Canny(blurred, 50, 150)
+    contours, _ = cv2.findContours(edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours: return None
+    
+    cnt = max(contours, key=cv2.contourArea)
+    rect = cv2.minAreaRect(cnt)
+    box = np.int0(cv2.boxPoints(rect))
+    
+    e1 = np.linalg.norm(box[0] - box[1])
+    e2 = np.linalg.norm(box[1] - box[2])
+    p1, p2 = (box[0], box[1]) if e1 < e2 else (box[1], box[2])
+    
+    center_edge = ((p1[0] + p2[0]) // 2, (p1[1] + p2[1]) // 2)
+    return center_edge, box
+
+if __name__ == "__main__": 
+    # 1. 멀티프로세싱 설정
+    command_q = mp.Queue()
+    
+    # 이전에 만든 모터 제어 프로세스가 있다면 여기서 시작
+    # p_motor = mp.Process(target=motor_worker, args=(command_q,))
+    # p_motor.start()
+
+    # 2. 초기 설정 데이터
+    BOX_DATA = {
+        "small_box": {"w": 140.0, "h": 100.0, "d": 50.0, "weight": 1.0},
+        "large_box": {"w": 120.0, "h": 110.0, "d": 53.0, "weight": 1.0},
+        "long_box":  {"w": 150.0, "h": 100.0, "d": 100.0, "weight": 1.0}
+    }
+
+    with open('camera_calibration.pkl', 'rb') as f:
+        calib = pickle.load(f)
+    mtx, dist = calib['camera_matrix'], calib['dist_coeffs']
+    
+    model = YOLO('best.pt')
+    bin_system = LiveBin(200, 200, 200, max_weight=100)
+
+    picam2 = Picamera2()
+    config = picam2.create_video_configuration(main={"size": (640, 480), "format": "RGB888"})
+    picam2.configure(config)
+    picam2.start()
+
+    print("시스템 가동... (A: 적재 확정, Q: 종료)")
+
+    try:
+        while True:
+            frame_raw = picam2.capture_array()
+            frame = cv2.cvtColor(frame_raw, cv2.COLOR_RGB2BGR)
+            h, w = frame.shape[:2]
+
+            newmtx, _ = cv2.getOptimalNewCameraMatrix(mtx, dist, (w,h), 0, (w,h))
+            undistorted = cv2.undistort(frame, mtx, dist, None, newmtx)
+
+            results = model(undistorted, stream=True, verbose=False)
+            key = cv2.waitKey(1) & 0xFF
+
+            for r in results:
+                for box_yolo in r.boxes:
+                    x1, y1, x2, y2 = map(int, box_yolo.xyxy[0])
+                    label = model.names[int(box_yolo.cls[0])]
+                    
+                    if label in BOX_DATA:
+                        roi = undistorted[y1:y2, x1:x2]
+                        edge_info = get_short_edge_center(roi) if roi.size > 0 else None
+                        
+                        if edge_info:
+                            rel_center, box_pts = edge_info
+                            abs_center = (rel_center[0] + x1, rel_center[1] + y1)
+                            
+                            cv2.drawContours(undistorted, [box_pts + [x1, y1]], 0, (0, 255, 0), 2)
+                            cv2.circle(undistorted, abs_center, 5, (0, 0, 255), -1)
+
+                            # --- 적재 로직 처리 구간 ---
+                            if key == ord('a'):
+                                spec = BOX_DATA[label]
+                                # 1. Item 객체 생성
+                                new_item = Item(label, spec['w'], spec['h'], spec['d'], spec['weight'])
+                                
+                                # 2. 적재 알고리즘 실행 (성공 여부, 회전 여부 수신)
+                                success, is_rotated = bin_system.place_item(new_item)
+                                
+                                if success:
+                                    print(f"\n[성공] {label} 배정 완료")
+                                    
+                                    # 3. 큐 전송용 데이터 패키징
+                                    control_data = {
+                                        "label": label,
+                                        "pick_pixel": abs_center,      # 카메라 상의 파지점
+                                        "target_xyz": (new_item.x, new_item.y, new_item.z), # 적재 좌표
+                                        "is_rotated": is_rotated       # 90도 회전 여부
+                                    }
+                                    
+                                    # 4. 큐에 넣기 (소비자 프로세스로 전송)
+                                    command_q.put(control_data)
+                                    
+                                    bin_system.print_state()
+                                else:
+                                    print(f"[실패] {label}을 넣을 공간이 없습니다.")
+                            # -------------------------
+
+                    cv2.rectangle(undistorted, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                    cv2.putText(undistorted, label, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+
+            cv2.imshow("Robot Vision System", undistorted)
+            if key == ord('q'): 
+                command_q.put("EXIT")
+                break
+
+    finally:
+        picam2.stop()
+        cv2.destroyAllWindows()
