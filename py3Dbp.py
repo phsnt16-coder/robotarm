@@ -40,15 +40,16 @@ if __name__ == "__main__":
 
     # 2. 초기 설정 데이터
     BOX_DATA = {
-        "small_box": {"w": 140.0, "h": 100.0, "d": 50.0, "weight": 1.0},
-        "large_box": {"w": 120.0, "h": 110.0, "d": 53.0, "weight": 1.0},
-        "long_box":  {"w": 150.0, "h": 100.0, "d": 100.0, "weight": 1.0}
+        "A_1": {"w": 140.0, "h": 100.0, "d": 50.0, "weight": 1.0},
+        "B_3": {"w": 120.0, "h": 110.0, "d": 53.0, "weight": 1.0},
+        "B_8":  {"w": 150.0, "h": 100.0, "d": 100.0, "weight": 1.0}
     }
 
     with open('camera_calibration.pkl', 'rb') as f:
         calib = pickle.load(f)
     mtx, dist = calib['camera_matrix'], calib['dist_coeffs']
-    
+
+    #YOLO모델 투입
     model = YOLO('best.pt')
     bin_system = LiveBin(200, 200, 200, max_weight=100)
 
