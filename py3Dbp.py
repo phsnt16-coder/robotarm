@@ -1,123 +1,99 @@
-import multiprocessing as mp
-import cv2
-import numpy as np
-import pickle
-import time
-from picamera2 import Picamera2
-from ultralytics import YOLO
+import itertools
 
-# 분리된 모듈 임포트
-from py3Dbp import Item, LiveBin
-from vision_utils import get_short_edge_center
+class Item:
+    def __init__(self, name, w, h, d, weight=1):
+        self.name = name
+        self.w, self.h, self.d = w, h, d
+        self.weight = weight
+        self.x = self.y = self.z = None
 
-if __name__ == "__main__":
-    # 1. 멀티프로세싱 및 통신 설정
-    command_q = mp.Queue()
+    def set_position(self, x, y, z):
+        self.x, self.y, self.z = x, y, z
 
-    # 2. 아이템 규격 데이터 (실제 측정 데이터로 수정 가능)
-    # 단위: mm (Bin 크기와 단위를 맞춰야 함)
-    BOX_DATA = {
-        "A_1": {"w": 140.0, "h": 50.0,  "d": 100.0, "weight": 1.0},
-        "B_3": {"w": 120.0, "h": 53.0,  "d": 110.0, "weight": 1.0},
-        "B_8":  {"w": 150.0, "h": 100.0, "d": 100.0, "weight": 1.0}
-    }
+class LiveBin:
+    def __init__(self, W, H, D, max_weight=9999):
+        self.W, self.H, self.D = W, H, D
+        self.max_weight = max_weight
+        self.current_weight = 0
+        self.placed_items = []
+        self.extreme_points = [(0, 0, 0)]
 
-    # 3. 카메라 설정 및 왜곡 보정 데이터 로드
-    try:
-        with open('camera_calibration.pkl', 'rb') as f:
-            calib = pickle.load(f)
-        mtx, dist = calib['camera_matrix'], calib['dist_coeffs']
-    except FileNotFoundError:
-        print("에러: camera_calibration.pkl 파일이 없습니다.")
-        exit()
+    def check_collision(self, item, x, y, z):
+        for p in self.placed_items:
+            if not (x + item.w <= p.x or p.x + p.w <= x or
+                    y + item.d <= p.y or p.y + p.d <= y or
+                    z + item.h <= p.z or p.z + p.h <= z):
+                return True
+        return False
 
-    # [최적화] 매 프레임 계산하지 않도록 루프 밖에서 미리 계산
-    W_IMG, H_IMG = 640, 480
-    newmtx, _ = cv2.getOptimalNewCameraMatrix(mtx, dist, (W_IMG, H_IMG), 0, (W_IMG, H_IMG))
+    def fits_in_container(self, item, x, y, z):
+        return (x + item.w <= self.W and y + item.d <= self.D and z + item.h <= self.H)
 
-    # 4. 모델 및 적재 시스템 초기화
-    model = YOLO('best.pt')
-    # 적재함 크기 설정 (예: 200x200x200 mm)
-    bin_system = LiveBin(200, 200, 200, max_weight=100)
+    def calculate_score(self, x, y, z):
+        # 바닥(z)부터 채우고, 안쪽(y), 왼쪽(x) 순으로 채우는 BLF 알고리즘
+        return z * 10000 + y * 100 + x
 
-    # 5. 카메라 가동
-    picam2 = Picamera2()
-    config = picam2.create_video_configuration(main={"size": (W_IMG, H_IMG), "format": "RGB888"})
-    picam2.configure(config)
-    picam2.start()
+    def place_item(self, item):
+        """
+        아이템 배치 시 (성공여부, 회전여부)를 반환합니다.
+        """
+        # 1. 무게 제한 확인
+        if self.current_weight + item.weight > self.max_weight:
+            return False, False
 
-    print("\n[시스템 가동] 화면을 보며 'A'키를 누르면 적재가 확정됩니다. (종료: Q)")
+        best_position = None
+        best_score = float("inf")
+        
+        # 2. 회전 케이스 설정 (높이 h는 고정하고 바닥면 w, d만 90도 회전)
+        rotations = [
+            (item.w, item.h, item.d, False), # 기본 (회전 안함)
+            (item.d, item.h, item.w, True)   # 90도 회전
+        ]
+        
+        for (rw, rh, rd, rotated_flag) in rotations:
+            for (x, y, z) in self.extreme_points:
+                temp_item = Item(item.name, rw, rh, rd, item.weight)
 
-    try:
-        while True:
-            # 프레임 획득 및 전처리
-            frame_raw = picam2.capture_array()
-            frame = cv2.cvtColor(frame_raw, cv2.COLOR_RGB2BGR)
-            
-            # 왜곡 보정 (함수 대신 직접 연산하여 속도 향상)
-            undistorted = cv2.undistort(frame, mtx, dist, None, newmtx)
+                if not self.fits_in_container(temp_item, x, y, z):
+                    continue
 
-            # YOLO 추론
-            results = model(undistorted, stream=True, verbose=False)
-            key = cv2.waitKey(1) & 0xFF
+                if self.check_collision(temp_item, x, y, z):
+                    continue
 
-            for r in results:
-                for box_yolo in r.boxes:
-                    x1, y1, x2, y2 = map(int, box_yolo.xyxy[0])
-                    conf = box_yolo.conf[0]
-                    label = model.names[int(box_yolo.cls[0])]
-                    
-                    if label in BOX_DATA and conf > 0.5:
-                        # 1. 파지점 검출 (ROI 추출)
-                        roi = undistorted[y1:y2, x1:x2]
-                        edge_info = get_short_edge_center(roi)
-                        
-                        if edge_info:
-                            rel_center, box_pts = edge_info
-                            abs_center = (rel_center[0] + x1, rel_center[1] + y1)
-                            
-                            # 시각화 (박스 윤곽선 및 파지 포인트)
-                            cv2.drawContours(undistorted, [box_pts + [x1, y1]], 0, (0, 255, 0), 2)
-                            cv2.circle(undistorted, abs_center, 5, (0, 0, 255), -1)
+                score = self.calculate_score(x, y, z)
+                if score < best_score:
+                    best_score = score
+                    best_position = (x, y, z, rw, rh, rd, rotated_flag)
 
-                            # 2. 적재 트리거 (A키 입력 시)
-                            if key == ord('a'):
-                                spec = BOX_DATA[label]
-                                # Item 객체 생성
-                                new_item = Item(label, spec['w'], spec['h'], spec['d'], spec['weight'])
-                                
-                                # 적재 알고리즘 실행
-                                success, is_rotated = bin_system.place_item(new_item)
-                                
-                                if success:
-                                    # 로봇 팔 프로세스로 보낼 데이터 패키징
-                                    control_data = {
-                                        "label": label,
-                                        "pick_pixel": abs_center,          # 그리퍼가 내려갈 픽셀 위치
-                                        "target_xyz": (new_item.x, new_item.y, new_item.z), # 적재함 내 좌표
-                                        "is_rotated": is_rotated           # 그리퍼 90도 회전 여부
-                                    }
-                                    command_q.put(control_data)
-                                    
-                                    print(f"\n[성공] {label} 배치: ({new_item.x}, {new_item.y}, {new_item.z})")
-                                    print(f"      회전 여부: {is_rotated}")
-                                    bin_system.print_state()
-                                else:
-                                    print(f"\n[실패] {label}을 적재할 공간이 부족합니다.")
+        # 3. 배치 결과 처리
+        if best_position is None:
+            return False, False
 
-                        # 기본 YOLO 박스 표시
-                        cv2.rectangle(undistorted, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                        cv2.putText(undistorted, f"{label} {conf:.2f}", (x1, y1-10), 
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        # 데이터 업데이트
+        x, y, z, rw, rh, rd, is_rotated = best_position
+        item.w, item.h, item.d = rw, rh, rd
+        item.set_position(x, y, z)
 
-            # 화면 출력
-            cv2.imshow("Robot Vision System", undistorted)
-            
-            if key == ord('q'):
-                command_q.put("EXIT")
-                break
+        self.placed_items.append(item)
+        self.current_weight += item.weight
+        self.update_extreme_points(item)
 
-    finally:
-        picam2.stop()
-        cv2.destroyAllWindows()
-        print("\n시스템을 종료합니다.")
+        return True, is_rotated
+
+    def update_extreme_points(self, item):
+        # 새로운 후보 좌표 생성 (적재된 물체의 모서리 지점들)
+        new_points = [
+            (item.x + item.w, item.y, item.z),
+            (item.x, item.y + item.d, item.z),
+            (item.x, item.y, item.z + item.h),
+        ]
+        for p in new_points:
+            if p[0] < self.W and p[1] < self.D and p[2] < self.H:
+                if p not in self.extreme_points:
+                    self.extreme_points.append(p)
+
+    def print_state(self):
+        print("\n[현재 적재 상태]")
+        for i in self.placed_items:
+            print(f"- {i.name}: 위치({i.x},{i.y},{i.z}) 크기({i.w},{i.h},{i.d})")
+        print(f"총 무게: {self.current_weight}/{self.max_weight}")
