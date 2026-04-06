@@ -1,123 +1,98 @@
-import multiprocessing as mp
 import cv2
 import numpy as np
 import pickle
-import time
+import os
+import serial
 from picamera2 import Picamera2
-from ultralytics import YOLO
 
-# 분리된 모듈 임포트
-from py3Dbp import Item, LiveBin
-from vision_utils import get_short_edge_center
+# 1. 분리된 모듈 임포트
+from ArUco import live_aruco_detection  # [ID, 각도, [X, Y, Z]] 반환
+from py3Dbp import Item, LiveBin        # 적재 알고리즘
 
+# 2. UART 통신 설정 (라즈베리 파이 5 기본 포트)
+ser = serial.Serial('/dev/ttyAMA0', 115200, timeout=1)
+
+def send_combined_packet(label, pick_coords, load_coords, angle):
+    """ 
+    파지 좌표(Pick)와 적재 좌표(Load)를 하나의 패킷으로 통합 전송 
+    포맷: STX,라벨,PickX,PickY,PickZ,LoadX,LoadY,LoadZ,각도,ETX
+    """
+    px, py, pz = pick_coords
+    lx, ly, lz = load_coords
+    
+    packet = (f"STX,{label},{px:.1f},{py:.1f},{pz:.1f},"
+              f"{lx:.1f},{ly:.1f},{lz:.1f},{angle:.1f},ETX\n")
+    
+    ser.write(packet.encode('utf-8'))
+    print(f"\n[통합 패킷 전송] {packet.strip()}")
+    
 if __name__ == "__main__":
-    # 1. 멀티프로세싱 및 통신 설정
-    command_q = mp.Queue()
-
-    # 2. 아이템 규격 데이터 (실제 측정 데이터로 수정 가능)
-    # 단위: mm (Bin 크기와 단위를 맞춰야 함)
+    # 3. 상자 규격 데이터 (ID 매칭)
     BOX_DATA = {
-        "A_1": {"w": 140.0, "h": 50.0,  "d": 100.0, "weight": 1.0},
-        "B_3": {"w": 120.0, "h": 53.0,  "d": 110.0, "weight": 1.0},
-        "B_8":  {"w": 150.0, "h": 100.0, "d": 100.0, "weight": 1.0}
+        1: {"label": "A_1", "w": 140.0, "h": 50.0,  "d": 100.0, "weight": 1.0},
+        2: {"label": "B_3", "w": 120.0, "h": 53.0,  "d": 110.0, "weight": 1.0},
+        3: {"label": "B_8", "w": 150.0, "h": 100.0, "d": 100.0, "weight": 1.0}
     }
 
-    # 3. 카메라 설정 및 왜곡 보정 데이터 로드
+    # 4. 카메라 캘리브레이션 로드
     try:
         with open('camera_calibration.pkl', 'rb') as f:
             calib = pickle.load(f)
-        mtx, dist = calib['camera_matrix'], calib['dist_coeffs']
     except FileNotFoundError:
         print("에러: camera_calibration.pkl 파일이 없습니다.")
         exit()
 
-    # [최적화] 매 프레임 계산하지 않도록 루프 밖에서 미리 계산
-    W_IMG, H_IMG = 640, 480
-    newmtx, _ = cv2.getOptimalNewCameraMatrix(mtx, dist, (W_IMG, H_IMG), 0, (W_IMG, H_IMG))
-
-    # 4. 모델 및 적재 시스템 초기화
-    model = YOLO('best.pt')
-    # 적재함 크기 설정 (예: 200x200x200 mm)
-    bin_system = LiveBin(200, 200, 200, max_weight=100)
-
-    # 5. 카메라 가동
+    # 카메라 초기화
     picam2 = Picamera2()
-    config = picam2.create_video_configuration(main={"size": (W_IMG, H_IMG), "format": "RGB888"})
+    config = picam2.create_video_configuration(main={"size": (640, 480), "format": "RGB888"})
     picam2.configure(config)
     picam2.start()
 
-    print("\n[시스템 가동] 화면을 보며 'A'키를 누르면 적재가 확정됩니다. (종료: Q)")
+    # 5. 적재 시스템 초기화
+    bin_system = LiveBin(200, 200, 200, max_weight=100)
+
+    print("\n[시스템 가동] 'A'키를 눌러 파지 및 적재를 확정하세요.")
 
     try:
         while True:
-            # 프레임 획득 및 전처리
-            frame_raw = picam2.capture_array()
-            frame = cv2.cvtColor(frame_raw, cv2.COLOR_RGB2BGR)
-            
-            # 왜곡 보정 (함수 대신 직접 연산하여 속도 향상)
-            undistorted = cv2.undistort(frame, mtx, dist, None, newmtx)
+            # 6. ArUco 엔진 실행
+            result = live_aruco_detection(calib, picam2)
 
-            # YOLO 추론
-            results = model(undistorted, stream=True, verbose=False)
-            key = cv2.waitKey(1) & 0xFF
+            if result:
+                marker_id, matched_angle, pick_coords = result
+                
+                if marker_id in BOX_DATA:
+                    spec = BOX_DATA[marker_id]
+                    label = spec["label"]
 
-            for r in results:
-                for box_yolo in r.boxes:
-                    x1, y1, x2, y2 = map(int, box_yolo.xyxy[0])
-                    conf = box_yolo.conf[0]
-                    label = model.names[int(box_yolo.cls[0])]
-                    
-                    if label in BOX_DATA and conf > 0.5:
-                        # 1. 파지점 검출 (ROI 추출)
-                        roi = undistorted[y1:y2, x1:x2]
-                        edge_info = get_short_edge_center(roi)
+                    # 7. 적재 위치 계산 (py3Dbp)
+                    new_item = Item(label, spec['w'], spec['h'], spec['d'], spec['weight'])
+                    success, is_rotated = bin_system.place_item(new_item)
+
+                    if success:
+                        load_coords = [new_item.x, new_item.y, new_item.z]
                         
-                        if edge_info:
-                            rel_center, box_pts = edge_info
-                            abs_center = (rel_center[0] + x1, rel_center[1] + y1)
-                            
-                            # 시각화 (박스 윤곽선 및 파지 포인트)
-                            cv2.drawContours(undistorted, [box_pts + [x1, y1]], 0, (0, 255, 0), 2)
-                            cv2.circle(undistorted, abs_center, 5, (0, 0, 255), -1)
+                        # --- 프롬프트 출력 강화 ---
+                        print("\n" + "="*50)
+                        print(f"[데이터 확정] ID: {marker_id} ({label})")
+                        print(f"[파지 좌표] X:{pick_coords[0]:.1f}, Y:{pick_coords[1]:.1f}, Z:{pick_coords[2]:.1f}")
+                        print(f"[적재 좌표] X:{load_coords[0]:.1f}, Y:{load_coords[1]:.1f}, Z:{load_coords[2]:.1f}")
+                        print(f"[회전 각도] {matched_angle:.2f} deg")
+                        print("="*50)
 
-                            # 2. 적재 트리거 (A키 입력 시)
-                            if key == ord('a'):
-                                spec = BOX_DATA[label]
-                                # Item 객체 생성
-                                new_item = Item(label, spec['w'], spec['h'], spec['d'], spec['weight'])
-                                
-                                # 적재 알고리즘 실행
-                                success, is_rotated = bin_system.place_item(new_item)
-                                
-                                if success:
-                                    # 로봇 팔 프로세스로 보낼 데이터 패키징
-                                    control_data = {
-                                        "label": label,
-                                        "pick_pixel": abs_center,          # 그리퍼가 내려갈 픽셀 위치
-                                        "target_xyz": (new_item.x, new_item.y, new_item.z), # 적재함 내 좌표
-                                        "is_rotated": is_rotated           # 그리퍼 90도 회전 여부
-                                    }
-                                    command_q.put(control_data)
-                                    
-                                    print(f"\n[성공] {label} 배치: ({new_item.x}, {new_item.y}, {new_item.z})")
-                                    print(f"      회전 여부: {is_rotated}")
-                                    bin_system.print_state()
-                                else:
-                                    print(f"\n[실패] {label}을 적재할 공간이 부족합니다.")
-
-                        # 기본 YOLO 박스 표시
-                        cv2.rectangle(undistorted, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                        cv2.putText(undistorted, f"{label} {conf:.2f}", (x1, y1-10), 
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-
-            # 화면 출력
-            cv2.imshow("Robot Vision System", undistorted)
+                        # 8. 파지+적재 통합 데이터 UART 전송
+                        send_combined_packet(label, pick_coords, load_coords, matched_angle)
+                        
+                        bin_system.print_state()
+                    else:
+                        print(f"\n >>> [알림] {label} 적재 공간 부족")
             
-            if key == ord('q'):
-                command_q.put("EXIT")
+            user_input = input("\n다음 상자를 인식하시겠습니까? (y/q): ")
+            if user_input.lower() == 'q':
                 break
 
     finally:
         picam2.stop()
-        cv2.destroyAllWindows()
+        if ser.is_open:
+            ser.close()
         print("\n시스템을 종료합니다.")
