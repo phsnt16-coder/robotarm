@@ -5,18 +5,18 @@ import os
 import serial
 from picamera2 import Picamera2
 
-# 1. 분리된 모듈 임포트
-from ArUco import live_aruco_detection  # [ID, 각도, [X, Y, Z]] 반환
+# 1. 분리된 모듈 import
+from ArUco import live_aruco_detection  # 파지좌표 반환 알고리즘
 from py3Dbp import Item, LiveBin        # 적재 알고리즘
 
-# 2. UART 통신 설정 (라즈베리 파이 5 기본 포트)
+# 2. UART 통신 설정 
 ser = serial.Serial('/dev/ttyAMA0', 115200, timeout=1)
 
 def send_combined_packet(label, pick_coords, load_coords, angle):
-    """ 
-    파지 좌표(Pick)와 적재 좌표(Load)를 하나의 패킷으로 통합 전송 
-    포맷: STX,라벨,PickX,PickY,PickZ,LoadX,LoadY,LoadZ,각도,ETX
-    """
+    
+    #파지 좌표(Pick)와 적재 좌표(Load)를 하나의 패킷 단위로 전송 
+    #포맷: STX,라벨,PickX,PickY,PickZ,LoadX,LoadY,LoadZ,각도,ETX
+    
     px, py, pz = pick_coords
     lx, ly, lz = load_coords
     
@@ -55,7 +55,7 @@ if __name__ == "__main__":
 
     try:
         while True:
-            # 6. ArUco 엔진 실행
+            # 6. ArUco 실행
             result = live_aruco_detection(calib, picam2)
 
             if result:
@@ -72,7 +72,7 @@ if __name__ == "__main__":
                     if success:
                         load_coords = [new_item.x, new_item.y, new_item.z]
                         
-                        # --- 프롬프트 출력 강화 ---
+                        # 8. 프롬프트 확인
                         print("\n" + "="*50)
                         print(f"[데이터 확정] ID: {marker_id} ({label})")
                         print(f"[파지 좌표] X:{pick_coords[0]:.1f}, Y:{pick_coords[1]:.1f}, Z:{pick_coords[2]:.1f}")
@@ -80,7 +80,7 @@ if __name__ == "__main__":
                         print(f"[회전 각도] {matched_angle:.2f} deg")
                         print("="*50)
 
-                        # 8. 파지+적재 통합 데이터 UART 전송
+                        # 9. 데이터 UART 전송
                         send_combined_packet(label, pick_coords, load_coords, matched_angle)
                         
                         bin_system.print_state()
