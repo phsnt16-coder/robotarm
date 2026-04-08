@@ -17,10 +17,16 @@ UART 기반의 통신 프로토콜
 휴리스틱 알고리즘 기반의 최적의 적재좌표 계산  
 ArUco 마커 자동인식을 통한 파지좌표 계산  
 
+# Main code  
 | 파일 | 상세 내용 | 비고 |
 | :--- | :--- | :--- |
 | ArUco.py | OpenCV | ArUco 감지, 파지점 출력 |
 | py3Dbp.py | intertools | 적재좌표 출력 |
-| main.py | Serial | UART 통신 |
+| main.py | Serial | UART 통신 |    
+
+
+# Sub code  
+| 파일 | 상세 내용 | 비고 |
+| :--- | :--- | :--- |
 | cap.py | OpenCV | 켈리브레이션용 사진 캡쳐 |
 | cali.py | OpenCV | 카메라 켈리브레이션 |
