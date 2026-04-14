@@ -26,7 +26,7 @@ def live_aruco_detection(calibration_data, picam2):
         [-marker_size / 2, -marker_size / 2, 0]
     ], dtype=np.float32)
 
-    # 최종 반환 데이터 리스트: [ID, 각도, [X, Y, Z]]
+    # 최종 반환 데이터 리스트: [ID, 각도, [X, Y, Z],중심축]
     captured_list = None
 
     try:
