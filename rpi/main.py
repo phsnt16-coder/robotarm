@@ -59,18 +59,31 @@ if __name__ == "__main__":
             result = live_aruco_detection(calib, picam2)
 
             if result:
-                marker_id, matched_angle, pick_coords = result
+                marker_id, matched_angle, pick_coords, up_axis = result
                 
                 if marker_id in BOX_DATA:
                     spec = BOX_DATA[marker_id]
                     label = spec["label"]
+                    if up_axis == 0:   # X축이 수직 (Side면이 보임)
+                        w_top, d_top, h_now = spec['h'], spec['d'], spec['w']
+                    elif up_axis == 1: # Y축이 수직 (Front면이 보임)
+                        w_top, d_top, h_now = spec['w'], spec['d'], spec['h']
+                    else:              # Z축이 수직 (Top면이 보임)
+                        w_top, d_top, h_now = spec['w'], spec['h'], spec['d']
 
                     # 7. 적재 위치 계산 (py3Dbp)
-                    new_item = Item(label, spec['w'], spec['h'], spec['d'], spec['weight'])
+                    # 이제 py3Dbp는 상자가 '놓여 있는 면'을 기준으로 계산함
+                    new_item = Item(label, w_top, h_now, d_top, spec['weight'])
                     success, is_rotated = bin_system.place_item(new_item)
 
                     if success:
-                        load_coords = [new_item.x, new_item.y, new_item.z]
+                        # 4. 그리퍼 목표 좌표 계산 (모서리 좌표 + 가로/2 + 세로/2)
+                        # item.w와 item.d는 py3Dbp 내부에서 회전(is_rotated)까지 반영된 최종 가로/세로임
+                        gripper_lx = new_item.x + (new_item.w / 2)
+                        gripper_ly = new_item.y + (new_item.d / 2)
+                        gripper_lz = new_item.z + new_item.h # 윗면 높이
+        
+                        load_coords = [gripper_lx, gripper_ly, gripper_lz]
                         
                         # 8. 프롬프트 확인
                         print("\n" + "="*50)
@@ -81,7 +94,7 @@ if __name__ == "__main__":
                         print("="*50)
 
                         # 9. 데이터 UART 전송
-                        send_combined_packet(label, pick_coords, load_coords, matched_angle)
+                        send_combined_packet(label, pick_coords, load_coords, matched_angle, is_rotated, success)
                         
                         bin_system.print_state()
                     else:
