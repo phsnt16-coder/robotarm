@@ -12,16 +12,20 @@ from py3Dbp import Item, LiveBin        # 적재 알고리즘
 # 2. UART 통신 설정 
 ser = serial.Serial('/dev/ttyAMA0', 115200, timeout=1)
 
-def send_combined_packet(label, pick_coords, load_coords, angle):
+def send_combined_packet(label, pick_coords, load_coords, angle, is_rotated, success):
     
     #파지 좌표(Pick)와 적재 좌표(Load)를 하나의 패킷 단위로 전송 
     #포맷: STX,라벨,PickX,PickY,PickZ,LoadX,LoadY,LoadZ,각도,ETX
     
     px, py, pz = pick_coords
     lx, ly, lz = load_coords
+    #TRUE, FALSE를 정수(0 또는 1)로 변환하여 전송
+    rotated_int = 1 if is_rotated else 0
+    success_int = 1 if success else 0
     
     packet = (f"STX,{label},{px:.1f},{py:.1f},{pz:.1f},"
-              f"{lx:.1f},{ly:.1f},{lz:.1f},{angle:.1f},ETX\n")
+              f"{lx:.1f},{ly:.1f},{lz:.1f},{angle:.1f}
+              f"{rotated_int},{success_int},ETX\n")
     
     ser.write(packet.encode('utf-8'))
     print(f"\n[통합 패킷 전송] {packet.strip()}")
