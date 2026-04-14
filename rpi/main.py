@@ -24,7 +24,7 @@ def send_combined_packet(label, pick_coords, load_coords, angle, is_rotated, suc
     success_int = 1 if success else 0
     
     packet = (f"STX,{label},{px:.1f},{py:.1f},{pz:.1f},"
-              f"{lx:.1f},{ly:.1f},{lz:.1f},{angle:.1f}
+              f"{lx:.1f},{ly:.1f},{lz:.1f},{angle:.1f},"
               f"{rotated_int},{success_int},ETX\n")
     
     ser.write(packet.encode('utf-8'))
@@ -69,11 +69,14 @@ if __name__ == "__main__":
                     spec = BOX_DATA[marker_id]
                     label = spec["label"]
                     if up_axis == 0:   # X축이 수직 (Side면이 보임)
-                        w_top, d_top, h_now = spec['h'], spec['d'], spec['w']
+                        #w_top, d_top, h_now = spec['h'], spec['d'], spec['w']
+                        w_top, d_top, h_now = spec['h'], spec['w'], spec['d']
                     elif up_axis == 1: # Y축이 수직 (Front면이 보임)
-                        w_top, d_top, h_now = spec['w'], spec['d'], spec['h']
+                        
+                        w_top, d_top, h_now = spec['h'], spec['d'], spec['w']
                     else:              # Z축이 수직 (Top면이 보임)
-                        w_top, d_top, h_now = spec['w'], spec['h'], spec['d']
+                        
+                        w_top, d_top, h_now = spec['w'], spec['d'], spec['h']
 
                     # 7. 적재 위치 계산 (py3Dbp)
                     # 이제 py3Dbp는 상자가 '놓여 있는 면'을 기준으로 계산함
