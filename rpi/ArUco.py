@@ -107,7 +107,7 @@ def live_aruco_detection(calibration_data, picam2):
                     cv2.putText(dst, f"Z-Drop: {coords_mm[0]:.0f}, {coords_mm[1]:.0f}, {coords_mm[2]:.0f}mm", (base_x, base_y - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 100, 0), 1)
 
                     # 리스트 형태로 데이터 저장: [ID, 각도, 좌표, 중심축]
-                    current_frame_results.append([int(marker_id), round(target_angle, 2), coords_mm], up_axis_idx)
+                    current_frame_results.append([int(marker_id), round(target_angle, 2), coords_mm, up_axis_idx])
 
             cv2.imshow('Dynamic Axis Matching', dst)
             
