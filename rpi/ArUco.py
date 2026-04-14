@@ -77,7 +77,8 @@ def live_aruco_detection(calibration_data, picam2):
                     # 수직 방향 및 각도 판별
                     y_components = [abs(x_axis[1]), abs(y_axis[1]), abs(z_axis[1])]
                     up_axis_idx = np.argmax(y_components)
-
+                    
+                    # up_axis_idx=0(x축), 1(y축), 2(z축)       
                     if up_axis_idx == 0:
                         target_angle, angle_label = roll - 180.0, "ROLL"
                         face_dir = "SIDE (X-VERTICAL)"
@@ -105,15 +106,15 @@ def live_aruco_detection(calibration_data, picam2):
                     cv2.putText(dst, f"MATCHED {angle_label}: {target_angle:.1f} deg", (base_x, base_y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 2)
                     cv2.putText(dst, f"Z-Drop: {coords_mm[0]:.0f}, {coords_mm[1]:.0f}, {coords_mm[2]:.0f}mm", (base_x, base_y - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 100, 0), 1)
 
-                    # 리스트 형태로 데이터 저장: [ID, 각도, 좌표]
-                    current_frame_results.append([int(marker_id), round(target_angle, 2), coords_mm])
+                    # 리스트 형태로 데이터 저장: [ID, 각도, 좌표, 중심축]
+                    current_frame_results.append([int(marker_id), round(target_angle, 2), coords_mm], up_axis_idx)
 
             cv2.imshow('Dynamic Axis Matching', dst)
             
             key = cv2.waitKey(1) & 0xFF
             if key == ord('a'):
                 if len(current_frame_results) > 0:
-                    captured_list = current_frame_results[0] # 첫 번째 인식 데이터 선택
+                    captured_list = current_frame_results[0] # 첫 번째 인식 데이터
                     break
                 else:
                     print("인식된 마커가 없습니다.")
