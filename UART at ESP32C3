@@ -1,0 +1,64 @@
+#include <Arduino.h>
+
+#define START_BYTE 0xAA
+#define END_BYTE   0xFF
+#define CMD_MOVE_XYZ 0x06
+
+#define ACK_START 0xAC
+#define ACK_END   0xCA
+#define ACK_OK    0x01
+#define ACK_FAIL  0x00
+
+#define PACKET_SIZE 11
+#define BAUDRATE 115200
+
+#define RX_PIN 7
+#define TX_PIN 6
+
+HardwareSerial PiSerial(1);
+
+void sendAck(uint8_t cmd, uint8_t status) {
+  uint8_t ack[4] = {ACK_START, cmd, status, ACK_END};
+  PiSerial.write(ack, 4);
+}
+
+bool parsePacket(uint8_t *packet) {
+  if (packet[0] != START_BYTE) return false;
+  if (packet[10] != END_BYTE) return false;
+
+  uint8_t cmd = packet[1];
+  if (cmd != CMD_MOVE_XYZ) return false;
+
+  int x = ((int)packet[3] << 8) | packet[2];
+  int y = ((int)packet[5] << 8) | packet[4];
+  int z = ((int)packet[7] << 8) | packet[6];
+  bool vac = packet[8] != 0;
+  bool flag = packet[9] != 0;
+
+  Serial.println("OK");
+  Serial.print("X: "); Serial.println(x);
+  Serial.print("Y: "); Serial.println(y);
+  Serial.print("Z: "); Serial.println(z);
+  Serial.print("VAC: "); Serial.println(vac);
+  Serial.print("FLAG: "); Serial.println(flag);
+
+  return true;
+}
+
+void setup() {
+  Serial.begin(115200);
+  PiSerial.begin(BAUDRATE, SERIAL_8N1, RX_PIN, TX_PIN);
+}
+
+void loop() {
+  if (PiSerial.available() >= PACKET_SIZE) {
+    uint8_t packet[PACKET_SIZE];
+
+    for (int i = 0; i < PACKET_SIZE; i++) {
+      packet[i] = (uint8_t)PiSerial.read();
+    }
+
+    bool ok = parsePacket(packet);
+    sendAck(packet[1], ok ? ACK_OK : ACK_FAIL);
+  }
+}
