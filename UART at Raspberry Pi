@@ -1,0 +1,83 @@
+import serial
+import time
+from typing import Tuple
+
+START_BYTE = 0xAA
+END_BYTE = 0xFF
+CMD_MOVE_XYZ = 0x06
+
+ACK_START = 0xAC
+ACK_END = 0xCA
+ACK_OK = 0x01
+ACK_FAIL = 0x00
+
+PORT = "/dev/serial0"
+BAUDRATE = 115200
+TIMEOUT_SEC = 1.0
+
+
+def split_u16(value: int) -> Tuple[int, int]:
+    if not (0 <= value <= 65535):
+        raise ValueError("값은 0~65535 범위여야 합니다.")
+    low = value & 0xFF
+    high = (value >> 8) & 0xFF
+    return low, high
+
+
+def make_packet(x: int, y: int, z: int, vac: bool, flag: bool) -> bytes:
+    x_l, x_h = split_u16(x)
+    y_l, y_h = split_u16(y)
+    z_l, z_h = split_u16(z)
+
+    return bytes([
+        START_BYTE,
+        CMD_MOVE_XYZ,
+        x_l, x_h,
+        y_l, y_h,
+        z_l, z_h,
+        1 if vac else 0,
+        1 if flag else 0,
+        END_BYTE,
+    ])
+
+
+def read_ack(ser: serial.Serial) -> bool:
+    ack = ser.read(4)
+    if len(ack) != 4:
+        print("ACK 수신 실패:", ack)
+        return False
+
+    print("수신 ACK:", [hex(b) for b in ack])
+
+    if ack[0] != ACK_START or ack[3] != ACK_END:
+        return False
+
+    if ack[1] != CMD_MOVE_XYZ:
+        return False
+
+    if ack[2] == ACK_OK:
+        print("패킷 정상 전달 확인")
+        return True
+
+    return False
+
+
+def main() -> None:
+    ser = serial.Serial(PORT, BAUDRATE, timeout=TIMEOUT_SEC)
+    time.sleep(2)
+
+    packet = make_packet(120, 80, 40, True, True)
+    print("송신 패킷:", [hex(b) for b in packet])
+
+    ser.reset_input_buffer()
+    ser.write(packet)
+    ser.flush()
+
+    ok = read_ack(ser)
+    print("결과:", "성공" if ok else "실패")
+
+    ser.close()
+
+
+if __name__ == "__main__":
+    main()
