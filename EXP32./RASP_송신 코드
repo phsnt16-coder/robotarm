@@ -1,0 +1,168 @@
+import serial
+import time
+
+START_BYTE = 0xAA
+END_BYTE = 0xFF
+
+ACK_START = 0xAC
+ACK_END = 0xCA
+ACK_OK = 0x01
+
+CMD_SET_PICK_PLACE = 0x01
+CMD_START = 0x02
+CMD_STOP = 0x03
+CMD_GO_HOME = 0x04
+CMD_GO_READY = 0x05
+CMD_VAC_ON = 0x06
+CMD_VAC_OFF = 0x07
+CMD_SET_SPEED = 0x08
+CMD_MOVE_SERVO = 0x09
+CMD_RUN_POSE = 0x0A
+CMD_GET_STATUS = 0x0B
+
+
+class RobotArmSerial:
+    def __init__(self, port="/dev/serial0", baudrate=115200, timeout=1.0):
+        self.ser = serial.Serial(port, baudrate, timeout=timeout)
+        time.sleep(2)
+
+    def close(self):
+        self.ser.close()
+
+    def split_u16(self, value):
+        if not (0 <= value <= 65535):
+            raise ValueError("value must be 0~65535")
+        return value & 0xFF, (value >> 8) & 0xFF
+
+    def read_ack(self, expected_cmd):
+        ack = self.ser.read(4)
+
+        if len(ack) != 4:
+            return False, "ACK length error"
+
+        if ack[0] != ACK_START or ack[3] != ACK_END:
+            return False, "ACK format error"
+
+        if ack[1] != expected_cmd:
+            return False, "ACK CMD mismatch"
+
+        if ack[2] != ACK_OK:
+            return False, "ACK fail"
+
+        return True, "ACK OK"
+
+    def write_and_check(self, packet, expected_cmd):
+        self.ser.reset_input_buffer()
+        self.ser.write(packet)
+        self.ser.flush()
+        return self.read_ack(expected_cmd)
+
+    def set_pick_place(self, box, rot_z, gx, gy, gz, px, py, pz, angle):
+        gx_l, gx_h = self.split_u16(gx)
+        gy_l, gy_h = self.split_u16(gy)
+        gz_l, gz_h = self.split_u16(gz)
+
+        px_l, px_h = self.split_u16(px)
+        py_l, py_h = self.split_u16(py)
+        pz_l, pz_h = self.split_u16(pz)
+
+        angle_l, angle_h = self.split_u16(angle)
+
+        packet = bytes([
+            START_BYTE,
+            CMD_SET_PICK_PLACE,
+            box & 0xFF,
+            rot_z & 0xFF,
+            gx_l, gx_h,
+            gy_l, gy_h,
+            gz_l, gz_h,
+            px_l, px_h,
+            py_l, py_h,
+            pz_l, pz_h,
+            angle_l, angle_h,
+            END_BYTE
+        ])
+
+        return self.write_and_check(packet, CMD_SET_PICK_PLACE)
+
+    def simple_cmd(self, cmd):
+        packet = bytes([START_BYTE, cmd, END_BYTE])
+        return self.write_and_check(packet, cmd)
+
+    def value_cmd(self, cmd, target_id, value):
+        val_l, val_h = self.split_u16(value)
+
+        packet = bytes([
+            START_BYTE,
+            cmd,
+            target_id & 0xFF,
+            val_l,
+            val_h,
+            END_BYTE
+        ])
+
+        return self.write_and_check(packet, cmd)
+
+    def start(self):
+        return self.simple_cmd(CMD_START)
+
+    def stop(self):
+        return self.simple_cmd(CMD_STOP)
+
+    def go_home(self):
+        return self.simple_cmd(CMD_GO_HOME)
+
+    def go_ready(self):
+        return self.simple_cmd(CMD_GO_READY)
+
+    def vac_on(self):
+        return self.simple_cmd(CMD_VAC_ON)
+
+    def vac_off(self):
+        return self.simple_cmd(CMD_VAC_OFF)
+
+    def set_speed(self, servo_id, speed):
+        return self.value_cmd(CMD_SET_SPEED, servo_id, speed)
+
+    def move_servo(self, servo_id, position):
+        return self.value_cmd(CMD_MOVE_SERVO, servo_id, position)
+
+    def run_pose(self, pose_id):
+        return self.value_cmd(CMD_RUN_POSE, 0, pose_id)
+
+    def get_status(self):
+        packet = bytes([START_BYTE, CMD_GET_STATUS, END_BYTE])
+        self.ser.reset_input_buffer()
+        self.ser.write(packet)
+        self.ser.flush()
+
+        response = self.ser.read(4)
+        if len(response) != 4:
+            return None
+
+        if response[0] == ACK_START and response[1] == CMD_GET_STATUS and response[3] == ACK_END:
+            return response[2]
+
+        return None
+
+
+if __name__ == "__main__":
+    arm = RobotArmSerial("/dev/serial0", 115200)
+
+    ok, msg = arm.set_pick_place(
+        box=1,
+        rot_z=0,
+        gx=120,
+        gy=80,
+        gz=40,
+        px=200,
+        py=150,
+        pz=60,
+        angle=90
+    )
+    print("SET_PICK_PLACE:", ok, msg)
+
+    ok, msg = arm.start()
+    print("START:", ok, msg)
+
+    arm.close()
