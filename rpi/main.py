@@ -7,41 +7,12 @@ import time
 from multiprocessing import Process, Queue
 from picamera2 import Picamera2
 
-# 1. 분리된 모듈 import
+# 1. 모듈 import
 from ArUco import live_aruco_detection  # 파지좌표 반환 알고리즘
 from py3Dbp import Item, LiveBin        # 적재 알고리즘
+from receiver import motor_control_receiver #수신 모듈
 
-# 2. UART 전송 프로세스
-def uart_control_process(q):
-    # UART 통신 설정
-    ser = serial.Serial('/dev/ttyAMA0', 115200, timeout=1)
-    
-    print("[제어 프로세스] UART 통신 대기 중")
-    
-    while True:
-        if not q.empty():
-            # 큐에서 데이터 획득
-            packet_data = q.get()
-            
-            # 포맷: STX,라벨,PickX,PickY,PickZ,LoadX,LoadY,LoadZ,각도,회전여부,성공여부,ETX
-            label = packet_data['label']
-            px, py, pz = packet_data['pick']
-            lx, ly, lz = packet_data['load']
-            angle = packet_data['angle']
-            rotated_int = 1 if packet_data['is_rotated'] else 0
-            success_int = 1 if packet_data['success'] else 0
-            
-            packet = (f"STX,{label},{px:.1f},{py:.1f},{pz:.1f},"
-                      f"{lx:.1f},{ly:.1f},{lz:.1f},{angle:.1f},"
-                      f"{rotated_int},{success_int},ETX\n")
-            
-            # 데이터 전송
-            ser.write(packet.encode('utf-8'))
-            print(f"\n[통합 패킷 전송] {packet.strip()}")
-        
-        time.sleep(0.01)
-
-# 3. 메인 비전 프로세스
+# 2. 메인 프로세스
 if __name__ == "__main__":
     # 상자 규격 데이터
     BOX_DATA = {
@@ -67,13 +38,13 @@ if __name__ == "__main__":
     # 적재 시스템 초기화
     bin_system = LiveBin(200, 200, 200, max_weight=100)
     
-    # 프로세스 간 통신 큐 생성
-    send_q = Queue(maxsize=1)
+    # 프로세스 큐 생성
+    shared_queue = Queue(maxsize=5)
     
-    # UART 프로세스 시작
-    p_uart = Process(target=uart_control_process, args=(send_q,))
-    p_uart.daemon = True
-    p_uart.start()
+    # receiver 프로세스 시작
+    p_receiver = Process(target=motor_control_receiver, args=(shared_queue,))
+    p_receiver.daemon = True
+    p_receiver.start()
 
     print("\n[시스템 가동] 'y'를 눌러 인식을 시작하고 'q'로 종료합니다.")
 
@@ -115,7 +86,7 @@ if __name__ == "__main__":
                         print(f"[적재 좌표] X:{load_coords[0]:.1f}, Y:{load_coords[1]:.1f}, Z:{load_coords[2]:.1f}")
                         print("="*50)
 
-                        # 전송용 딕셔너리 구성 및 큐 삽입
+                        # 전송용 딕셔너리 구성
                         packet_payload = {
                             'label': label,
                             'pick': pick_coords,
@@ -124,20 +95,19 @@ if __name__ == "__main__":
                             'is_rotated': is_rotated,
                             'success': success
                         }
-                        
-                        if not send_q.full():
-                            send_q.put(packet_payload)
+                        # 3. 큐에 데이터 삽입
+                        if not shared_queue.full():
+                            shared_queue.put(packet_payload)
                         
                         bin_system.print_state()
                     else:
                         print(f"\n >>> [알림] {label} 적재 공간 부족")
-            
+            # 4. 계속 진행 확인
             user_input = input("\n다음 상자를 인식하시겠습니까? (y/q): ")
             if user_input.lower() == 'q':
                 break
 
     finally:
         picam2.stop()
-        if p_uart.is_alive():
-            p_uart.terminate()
+        p_receiver.terminate()
         print("\n시스템을 종료합니다.")
