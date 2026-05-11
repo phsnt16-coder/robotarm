@@ -1,308 +1,130 @@
 import serial
 import time
 
-PORT = "/dev/ttyACM0"
-BAUDRATE = 1000000
-
-SERVO_COUNT = 7
-
-STATE_IDLE = 0
-STATE_MOVE_GRASP = 1
-STATE_VAC_ON = 2
-STATE_LIFT = 3
-STATE_MOVE_PLACE = 4
-STATE_VAC_OFF = 5
-STATE_DONE = 6
-STATE_STOP = 7
-STATE_HOME = 8
-STATE_READY = 9
-
-POSE_HOME = 0
-POSE_READY = 1
-POSE_LIFT = 2
-
-ser = serial.Serial(PORT, BAUDRATE, timeout=0.1)
-
-current_pos = [2048, 2048, 2048, 2048, 2048, 2048, 0]
-target_pos = [2048, 2048, 2048, 2048, 2048, 2048, 0]
-speed_val = [10, 10, 10, 10, 10, 10, 10]
-
-box_type = 0
-rot_z = 0
-
-gx = 0
-gy = 0
-gz = 0
-
-px = 0
-py = 0
-pz = 0
-
-grasp_angle = 2048
-
-vacuum_state = False
-state = STATE_IDLE
-
-state_start_time = 0
-
-pose_table = {
-    POSE_HOME:  [2048, 2048, 2048, 2048, 2048, 2048, 0],
-    POSE_READY: [2048, 1800, 1800, 1600, 1600, 2048, 0],
-    POSE_LIFT:  [2048, 1700, 1700, 1500, 1500, 2048, 0],
-}
-
-
-def millis():
-    return int(time.monotonic() * 1000)
-
-
-def checksum(data):
-    return (~sum(data)) & 0xFF
-
-
-def write_position(servo_id, position):
-    pos_l = position & 0xFF
-    pos_h = (position >> 8) & 0xFF
-
-    packet = [
-        0xFF, 0xFF,
-        servo_id,
-        7,
-        3,
-        0x2A,
-        pos_l,
-        pos_h,
-        0,
-        0
-    ]
-
-    packet.append(checksum(packet[2:]))
-
-    ser.write(bytearray(packet))
-
-
-def set_state(new_state):
-    global state
-    global state_start_time
-
-    state = new_state
-    state_start_time = millis()
-
-
-def set_pick_place(box, rz, grasp_xyz, place_xyz, angle):
-    global box_type
-    global rot_z
-
-    global gx
-    global gy
-    global gz
-
-    global px
-    global py
-    global pz
-
-    global grasp_angle
-
-    box_type = box
-    rot_z = rz
-
-    gx, gy, gz = grasp_xyz
-    px, py, pz = place_xyz
-
-    grasp_angle = angle
-
-    set_state(STATE_IDLE)
-
-
-def apply_pose(pose_id):
-    if pose_id not in pose_table:
-        return
-
-    for i in range(SERVO_COUNT):
-        target_pos[i] = pose_table[pose_id][i]
-
-
-def apply_speed(servo_id, speed):
-    if 0 <= servo_id < SERVO_COUNT:
-        speed_val[servo_id] = max(1, speed)
-
-
-def apply_move_servo(servo_id, position):
-    if 0 <= servo_id < SERVO_COUNT:
-        target_pos[servo_id] = constrain(position, 0, 4095)
-
-
-def stop_all():
-    global vacuum_state
-
-    for i in range(SERVO_COUNT):
-        target_pos[i] = current_pos[i]
-
-    vacuum_state = False
-
-    set_state(STATE_STOP)
-
-
-def go_home():
-    set_state(STATE_HOME)
-
-
-def go_ready():
-    set_state(STATE_READY)
-
-
-def vacuum_on():
-    global vacuum_state
-    vacuum_state = True
-
-
-def vacuum_off():
-    global vacuum_state
-    vacuum_state = False
-
-
-def convert_grasp_xyz_to_target():
-    target_pos[0] = constrain(2048 + gx, 0, 4095)
-    target_pos[1] = constrain(2048 + gy, 0, 4095)
-    target_pos[2] = constrain(2048 + gy, 0, 4095)
-    target_pos[3] = constrain(2048 + gz, 0, 4095)
-    target_pos[4] = constrain(2048 + gz, 0, 4095)
-    target_pos[5] = constrain(grasp_angle, 0, 4095)
-
-
-def convert_place_xyz_to_target():
-    target_pos[0] = constrain(2048 + px, 0, 4095)
-    target_pos[1] = constrain(2048 + py, 0, 4095)
-    target_pos[2] = constrain(2048 + py, 0, 4095)
-    target_pos[3] = constrain(2048 + pz, 0, 4095)
-    target_pos[4] = constrain(2048 + pz, 0, 4095)
-    target_pos[5] = constrain(grasp_angle, 0, 4095)
-
-
-def update_servo():
-    for i in range(SERVO_COUNT - 1):
-
-        if current_pos[i] < target_pos[i]:
-            current_pos[i] += speed_val[i]
-
-            if current_pos[i] > target_pos[i]:
-                current_pos[i] = target_pos[i]
-
-        elif current_pos[i] > target_pos[i]:
-            current_pos[i] -= speed_val[i]
-
-            if current_pos[i] < target_pos[i]:
-                current_pos[i] = target_pos[i]
-
-        write_position(i, current_pos[i])
-
-
-def update_vacuum():
-    set_vacuum_hardware(vacuum_state)
-
-
-def set_vacuum_hardware(on):
-    pass
-
-
-def is_target_reached():
-    for i in range(SERVO_COUNT - 1):
-        if current_pos[i] != target_pos[i]:
-            return False
-
-    return True
-
-
-def process_state():
-    global vacuum_state
-
-    current_time = millis()
-
-    if state == STATE_IDLE:
-        return
-
-    elif state == STATE_MOVE_GRASP:
-        convert_grasp_xyz_to_target()
-
-        if is_target_reached():
-            set_state(STATE_VAC_ON)
-
-    elif state == STATE_VAC_ON:
-        vacuum_state = True
-
-        if current_time - state_start_time >= 500:
-            set_state(STATE_LIFT)
-
-    elif state == STATE_LIFT:
-        apply_pose(POSE_LIFT)
-
-        if is_target_reached():
-            set_state(STATE_MOVE_PLACE)
-
-    elif state == STATE_MOVE_PLACE:
-        convert_place_xyz_to_target()
-
-        if is_target_reached():
-            set_state(STATE_VAC_OFF)
-
-    elif state == STATE_VAC_OFF:
-        vacuum_state = False
-
-        if current_time - state_start_time >= 300:
-            set_state(STATE_DONE)
-
-    elif state == STATE_DONE:
-        apply_pose(POSE_READY)
-
-        if is_target_reached():
-            set_state(STATE_IDLE)
-
-    elif state == STATE_STOP:
-        return
-
-    elif state == STATE_HOME:
-        apply_pose(POSE_HOME)
-
-        if is_target_reached():
-            set_state(STATE_IDLE)
-
-    elif state == STATE_READY:
-        apply_pose(POSE_READY)
-
-        if is_target_reached():
-            set_state(STATE_IDLE)
-
-
-def start_task():
-    set_state(STATE_MOVE_GRASP)
-
-
-def constrain(value, min_value, max_value):
-    return max(min_value, min(value, max_value))
-
-
-def main_loop():
-    while True:
-        process_state()
-        update_servo()
-        update_vacuum()
-
-
-if __name__ == "__main__":
-
-    set_pick_place(
-        box=1,
-        rz=0,
-        grasp_xyz=(100, -100, -200),
-        place_xyz=(200, -150, -100),
-        angle=2048
-    )
-
-    start_task()
-
-    try:
-        main_loop()
-
-    except KeyboardInterrupt:
-        stop_all()
-        ser.close()
+class RobotArmController:
+    def __init__(self, port="/dev/ttyACM0", baudrate=1000000):
+        # 1. 하드웨어 설정
+        try:
+            self.ser = serial.Serial(port, baudrate, timeout=0.1)
+        except:
+            print("[에러] 시리얼 포트를 연결할 수 없습니다.")
+            self.ser = None
+
+        self.SERVO_COUNT = 7
+        
+        # 2. 상수 정의
+        self.STATE_IDLE = 0
+        self.STATE_MOVE_GRASP = 1
+        self.STATE_VAC_ON = 2
+        self.STATE_LIFT = 3
+        self.STATE_MOVE_PLACE = 4
+        self.STATE_VAC_OFF = 5
+        self.STATE_DONE = 6
+        self.STATE_HOME = 8
+        self.STATE_READY = 9
+
+        # 3. 자세 테이블
+        self.pose_table = {
+            0: [2048, 2048, 2048, 2048, 2048, 2048, 0],    # HOME
+            1: [2048, 1800, 1800, 1600, 1600, 2048, 0],    # READY
+            2: [2048, 1700, 1700, 1500, 1500, 2048, 0],    # LIFT
+        }
+
+        # 4. 가변 변수 초기화
+        self.current_pos = [2048] * self.SERVO_COUNT
+        self.target_pos = [2048] * self.SERVO_COUNT
+        self.speed_val = [20] * self.SERVO_COUNT # 속도를 조금 높임
+        
+        self.state = self.STATE_IDLE
+        self.state_start_time = 0
+        self.vacuum_state = False
+        
+        # 목표 좌표 저장용
+        self.gx, self.gy, self.gz = 0, 0, 0
+        self.px, self.py, self.pz = 0, 0, 0
+        self.grasp_angle = 2048
+
+    def millis(self):
+        return int(time.monotonic() * 1000)
+
+    def set_state(self, new_state):
+        self.state = new_state
+        self.state_start_time = self.millis()
+
+    def set_pick_place(self, pick_xyz, place_xyz, angle):
+        # 큐에서 받아온 데이터를 사용
+        self.gx, self.gy, self.gz = pick_xyz
+        self.px, self.py, self.pz = place_xyz
+        self.grasp_angle = int(2048 + (angle * 11.37)) # 각도를 서보 값으로 변환
+        self.set_state(self.STATE_MOVE_GRASP) # 데이터 들어오면 즉시 시작
+
+    def update(self):
+        # 메인 루프에서 무한 반복
+        self._process_state()
+        self._update_servo()
+        self._set_vacuum_hardware()
+
+    def _process_state(self):
+        curr_time = self.millis()
+        if self.state == self.STATE_IDLE: return
+
+        # 이동 및 동작 로직
+        if self.state == self.STATE_MOVE_GRASP:
+            self._calc_target(self.gx, self.gy, self.gz)
+            if self._is_reached(): self.set_state(self.STATE_VAC_ON)
+
+        elif self.state == self.STATE_VAC_ON:
+            self.vacuum_state = True
+            if curr_time - self.state_start_time >= 500: self.set_state(self.STATE_LIFT)
+
+        elif self.state == self.STATE_LIFT:
+            self._apply_pose(2) # LIFT Pose
+            if self._is_reached(): self.set_state(self.STATE_MOVE_PLACE)
+
+        elif self.state == self.STATE_MOVE_PLACE:
+            self._calc_target(self.px, self.py, self.pz)
+            if self._is_reached(): self.set_state(self.STATE_VAC_OFF)
+
+        elif self.state == self.STATE_VAC_OFF:
+            self.vacuum_state = False
+            if curr_time - self.state_start_time >= 300: self.set_state(self.STATE_DONE)
+
+        elif self.state == self.STATE_DONE:
+            self._apply_pose(1) # READY Pose
+            if self._is_reached(): self.set_state(self.STATE_IDLE)
+
+    def _calc_target(self, x, y, z):
+        # 임시 역기구학 수식 (나중에 수정 필요)
+        self.target_pos[0] = self._constrain(2048 + int(x), 0, 4095)
+        self.target_pos[3] = self._constrain(2048 + int(z), 0, 4095)
+        self.target_pos[5] = self._constrain(self.grasp_angle, 0, 4095)
+
+    def _update_servo(self):
+        for i in range(self.SERVO_COUNT - 1):
+            if self.current_pos[i] < self.target_pos[i]:
+                self.current_pos[i] = min(self.current_pos[i] + self.speed_val[i], self.target_pos[i])
+            elif self.current_pos[i] > self.target_pos[i]:
+                self.current_pos[i] = max(self.current_pos[i] - self.speed_val[i], self.target_pos[i])
+            
+            self._write_serial(i, self.current_pos[i])
+
+    def _write_serial(self, s_id, pos):
+        if not self.ser: return
+        pos_l, pos_h = pos & 0xFF, (pos >> 8) & 0xFF
+        packet = [0xFF, 0xFF, s_id, 7, 3, 0x2A, pos_l, pos_h, 0, 0]
+        chksum = (~sum(packet[2:])) & 0xFF
+        packet.append(chksum)
+        self.ser.write(bytearray(packet))
+
+    def _apply_pose(self, pose_id):
+        self.target_pos = list(self.pose_table[pose_id])
+
+    def _is_reached(self):
+        return all(self.current_pos[i] == self.target_pos[i] for i in range(self.SERVO_COUNT - 1))
+
+    def _constrain(self, v, mn, mx):
+        return max(mn, min(v, mx))
+
+    def _set_vacuum_hardware(self):
+        # GPIO 제어 코드가 추가하기
+        pass
