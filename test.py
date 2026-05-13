@@ -1,0 +1,32 @@
+import serial
+import time
+
+ser = serial.Serial('/dev/ttyACM0', 1000000, timeout=0.1)
+
+def checksum(data):
+    return (~sum(data)) & 0xFF
+
+def write_position(servo_id, position):
+    pos_l = position & 0xFF
+    pos_h = (position >> 8) & 0xFF
+    
+    packet = [
+        0xFF, 0xFF,
+        servo_id,
+        7,              # length
+        3,              # WRITE
+        0x2A,           # Goal Position address
+        pos_l,
+        pos_h,
+        0, 0            # time, speed
+    ]
+    
+    packet.append(checksum(packet[2:]))
+    ser.write(bytearray(packet))
+
+# 테스트
+while True:
+    write_position(1, 2048)
+    time.sleep(1)
+    write_position(1, 700)
+    time.sleep(1)
