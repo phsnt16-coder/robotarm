@@ -63,10 +63,10 @@ def live_aruco_detection(calibration_data, picam2):
                     x_axis, y_axis, z_axis = rmat[:, 0], rmat[:, 1], rmat[:, 2]
 
                     # ID별 z축으로 내릴 거리 설정 (Z-drop 오프셋)
-                    if marker_id == 1: distance = 0.025
-                    elif marker_id == 2: distance = 0.0265
-                    elif marker_id == 3: distance = 0.050
-                    else: distance = 0.010
+                    if marker_id == 1: distance = -0.025
+                    elif marker_id == 2: distance = -0.0265
+                    elif marker_id == 3: distance = -0.050
+                    else: distance = -0.010
                     
                     # Z-Drop 좌표 계산 (카메라 기준 좌표계)
                     z_dropped_point_3d = tvec.flatten() + (distance * z_axis)
