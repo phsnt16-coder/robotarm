@@ -11,6 +11,7 @@ from picamera2 import Picamera2
 from ArUco import live_aruco_detection  # 파지좌표 반환 알고리즘
 from py3Dbp import Item, LiveBin        # 적재 알고리즘
 from receiver import motor_control_receiver #수신 모듈
+from visualizer import BinVisualizer   # 시각화 모듈
 
 # 2. 메인 프로세스
 if __name__ == "__main__":
@@ -31,7 +32,7 @@ if __name__ == "__main__":
 
     # 카메라 초기화
     picam2 = Picamera2()
-    config = picam2.create_video_configuration(main={"size": (640, 480), "format": "RGB888"})
+    config = picam2.create_video_configuration(main={"size": (640, 480), "format": "BGR888"})
     picam2.configure(config)
     picam2.start()
 
@@ -85,6 +86,9 @@ if __name__ == "__main__":
                         print(f"[파지 좌표] X:{pick_coords[0]:.1f}, Y:{pick_coords[1]:.1f}, Z:{pick_coords[2]:.1f}")
                         print(f"[적재 좌표] X:{load_coords[0]:.1f}, Y:{load_coords[1]:.1f}, Z:{load_coords[2]:.1f}")
                         print("="*50)
+                        
+                        visualizer = BinVisualizer(bin_system)
+                        visualizer.update_plot()
 
                         # 전송용 딕셔너리 구성
                         packet_payload = {
