@@ -22,7 +22,8 @@
 | :--- | :--- | :--- |
 | ArUco.py | OpenCV | ArUco 감지, 파지점 출력 |
 | py3Dbp.py | intertools | 적재좌표 출력 |
-| main.py | Serial | UART 통신 |    
+| main.py | Serial | UART 통신 |   
+| visualizer.py | matplotlib | 시각화 툴 |
 
 
 # Sub code  
