@@ -15,6 +15,7 @@
 
 # Features
 
+<img width="350" height="572" alt="Image" src="https://github.com/user-attachments/assets/e1723f58-8d9d-4658-9622-52f345041c24" />
 - UART 기반의 통신 프로토콜  
 - 휴리스틱 알고리즘 기반의 최적의 적재좌표 계산  
 - ArUco 마커 자동인식을 통한 파지좌표 계산  
