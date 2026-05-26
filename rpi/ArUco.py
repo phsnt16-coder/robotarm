@@ -72,7 +72,7 @@ def live_aruco_detection(calibration_data, picam2):
                     z_dropped_point_3d = tvec.flatten() + (distance * z_axis)
                     # mm 단위로 변환하여 리스트화
                     px_z, py_z, pz_z = z_dropped_point_3d * 1000 
-                    coords_mm = [round(px_z, 1), round(pz_z * np.cos(np.radians(45.0)), 1), round(pz_z, 1)]  #y=카메라에서 마커까지 거리*cos(45)
+                    coords_mm = [round(px_z, 1), round(pz_z, 1), round(pz_z, 1)]  #y=카메라에서 마커까지 거리*cos(45)
                     
                     # 수직 방향 및 각도 판별
                     y_components = [abs(x_axis[1]), abs(y_axis[1]), abs(z_axis[1])]
