@@ -1,0 +1,88 @@
+import time
+import os
+
+class ESP32Emulator:
+    """
+    라즈베리파이 5의 RP1 칩셋 내장 하드웨어 PWM을 활용하여
+    ESP32-S3의 500Hz 특수 서보 신호를 모방하는 그리퍼 제어 클래스입니다.
+    """
+    def __init__(self, pump_channel=0, valve_channel=1):
+        print("\n[그리퍼 모듈] 하드웨어 PWM 에뮬레이션 초기화 중...")
+        self.pwm_base = "/sys/class/pwm/pwmchip0"
+        self.pump_ch = pump_channel
+        self.valve_ch = valve_channel
+        
+        # 실측 데이터 기반 스펙 정의 (500Hz)
+        self.period_ns = 20000000 // 10  # 2,000,000 ns (2ms)
+        self.p_high_ns = 1637800          # ESP32 write(180) 비율 매칭값
+        self.p_low_ns = 362200            # ESP32 write(0) 비율 매칭값
+
+        # 커널 PWM 채널 활성화
+        self._export_channel(self.pump_ch)
+        self._export_channel(self.valve_ch)
+        time.sleep(0.2)
+        
+        # 커널 가동 전 기존 잔여 펄스 폭 초기화 (Errno 22 예외 방지 필수)
+        self._clear_channel(self.pump_ch)
+        self._clear_channel(self.valve_ch)
+        
+        # 주파수(주기) 세팅
+        self._set_period(self.pump_ch, self.period_ns)
+        self._set_period(self.valve_ch, self.period_ns)
+        print("[그리퍼 모듈] 500Hz 하드웨어 동기화 완료. 제어 준비 완료.")
+
+    def _export_channel(self, channel):
+        if not os.path.exists(f"{self.pwm_base}/pwm{channel}"):
+            os.system(f"echo {channel} > {self.pwm_base}/export")
+
+    def _clear_channel(self, channel):
+        path = f"{self.pwm_base}/pwm{channel}"
+        if os.path.exists(path):
+            with open(f"{path}/enable", "w") as f: f.write("0")
+            with open(f"{path}/duty_cycle", "w") as f: f.write("0")
+
+    def _set_period(self, channel, period):
+        with open(f"{self.pwm_base}/pwm{channel}/period", "w") as f:
+            f.write(str(period))
+
+    def _write_raw_duty(self, channel, duty_ns):
+        # 커널 레지스터 순서 규칙 준수: duty_cycle 선행 입력 후 enable
+        path = f"{self.pwm_base}/pwm{channel}"
+        with open(f"{path}/duty_cycle", "w") as f:
+            f.write(str(duty_ns))
+        with open(f"{path}/enable", "w") as f:
+            f.write("1")
+
+    def control(self, pump_on=True):
+        """
+        그리퍼 상태 통합 제어 함수
+        - pump_on=True  : 물체 흡착 (펌프 HIGH / 밸브 LOW)
+        - pump_on=False : 물체 해제 (펌프 LOW / 밸브 HIGH)
+        """
+        if pump_on:
+            self._write_raw_duty(self.pump_ch, self.p_high_ns)
+            self._write_raw_duty(self.valve_ch, self.p_low_ns)
+        else:
+            self._write_raw_duty(self.pump_ch, self.p_low_ns)
+            self._write_raw_duty(self.valve_ch, self.p_high_ns)
+
+    def write_angle(self, channel, angle):
+        
+        # 기존 아두이노의 Servo.write(각도) 방식을 완벽하게 호환하는 에뮬레이션 함수
+        # 0도 ~ 180도 사이의 값을 500Hz 주기 내의 하드웨어 나노초 비율로 매핑
+        
+        if angle < 0: angle = 0
+        if angle > 180: angle = 180
+        
+        # 527us(527000ns) ~ 2383us(2383000ns) 범위를 500Hz 주기에 맞춰 스케일링한 매핑 수식
+        # 각도에 따라 p_low_ns(362200)에서 p_high_ns(1637800) 사이로 선형 변환
+        duty_ns = int(self.p_low_ns + (angle / 180.0) * (self.p_high_ns - self.p_low_ns))
+        
+        target_ch = self.pump_ch if channel == 0 else self.valve_ch
+        self._write_raw_duty(target_ch, duty_ns)
+
+    def release_hardware(self):
+        # 그리퍼 안전 정지 및 PWM 하드웨어 해제
+        print("[그리퍼 모듈] 하드웨어 출력을 안전하게 끕니다.")
+        self._clear_channel(self.pump_ch)
+        self._clear_channel(self.valve_ch)
