@@ -1,0 +1,20 @@
+from scservo_sdk import *
+
+PORT = "COM6"
+BAUD = 1000000
+
+portHandler = PortHandler(PORT)
+packetHandler = scscl(portHandler)
+
+portHandler.openPort()
+portHandler.setBaudRate(BAUD)
+
+print("ID 검색 시작")
+
+for servo_id in range(0, 21):
+    pos, result, error = packetHandler.ReadPos(servo_id)
+
+    if result == COMM_SUCCESS:
+        print(f"ID {servo_id} 발견 | Position: {pos}")
+
+portHandler.closePort()
