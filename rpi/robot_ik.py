@@ -3,7 +3,7 @@ from ikpy.chain import Chain
 class RobotIKController:
     # 하드웨어 및 기본 파라미터 고정 설정
     URDF_PATH = "mybot.urdf"
-    ACTIVE_MASK = [False, True, True, True, False, True, False]
+    ACTIVE_MASK = [False, True, True, True, True, False]
     DEFAULT_ORIENTATION = [0, 0, -1]
     ORIENTATION_MODE = "Z"
 
