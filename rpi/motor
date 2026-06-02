@@ -1,664 +1,359 @@
-"""
-코드 목적:
-이 코드는 Raspberry Pi에서 UART 시리얼 통신을 이용하여 FT-SCS15 계열 버스 서보 기반 로봇암을 제어하기 위한 상태 머신 기반 Pick & Place 예제 코드이다.
-그리퍼는 진공 흡착 방식으로 가정되어 있으며, 물체 집기 위치, 들어 올리기 위치, 적재 위치, 진공 ON/OFF 동작을 순차적으로 수행한다.
-
-주요 동작 흐름:
-1. 목표 물체의 집기 좌표와 적재 좌표를 설정한다.
-2. 로봇암을 집기 위치로 이동한다.
-3. 진공 흡착을 켠다.
-4. 물체를 들어 올린다.
-5. 적재 위치로 이동한다.
-6. 진공 흡착을 끈다.
-7. 준비 자세로 복귀한다.
-"""
-
-import serial
-# 시리얼 통신을 사용하기 위한 라이브러리를 불러온다.
-
+from scservo_sdk import *
 import time
-# 시간 측정과 대기 시간 계산을 위해 time 라이브러리를 불러온다.
+import math
 
-from gripper import ESP32Emulator
-# gripper.py 파일로부터 에뮬레이터 클래스 로드
-
+# ==================================================
+# 기본 설정
+# ==================================================
 PORT = "/dev/ttyACM0"
-# Raspberry Pi에서 버스 서보 드라이버가 연결된 시리얼 포트 경로를 지정한다.
+BAUD = 1000000
 
-BAUDRATE = 1000000
-# FT-SCS15 서보와 통신하기 위한 UART 통신 속도를 1,000,000 bps로 설정한다.
+MAX_POS = 1023
+MAX_DEG = 220.0
 
+# 모터 ID
+ID_1 = 1
+ID_2 = 2
+ID_3 = 3
+ID_4 = 4
+ID_5 = 5
+ID_6 = 6
 
-SERVO_COUNT = 7
-# 전체 서보 개수를 7개로 정의한다.
-# 현재 update_servo()에서는 SERVO_COUNT - 1까지만 제어하므로 실제 위치 제어 대상은 6축으로 동작한다.
+# 구형 모터 속도
+OLD_SPEED = 500
+OLD_TIME = 2000
 
+# 신형 모터 속도
+NEW_SPEED = 181
+NEW_ACC = 1
 
-STATE_IDLE = 0
-# 대기 상태이다. 아무 동작도 수행하지 않는다.
+# 기준 각도
+BASE_DEG_1 = 110.0
+BASE_DEG_23 = 110.0
+BASE_DEG_45 = 110.0
+BASE_DEG_6 = 110.0
 
-STATE_MOVE_GRASP = 1
-# 물체를 집기 위한 위치로 이동하는 상태이다.
+# 초기 위치 저장용
+init_pos = {}
 
-STATE_VAC_ON = 2
-# 진공 흡착을 켜는 상태이다.
+# 포트 및 서보 객체
+portHandler = PortHandler(PORT)
+oldServo = scscl(portHandler)
+newServo = sms_sts(portHandler)
 
-STATE_LIFT = 3
-# 물체를 들어 올리는 상태이다.
 
-STATE_MOVE_PLACE = 4
-# 물체를 적재 위치로 이동시키는 상태이다.
+# ==================================================
+# 공통 함수
+# ==================================================
+def clamp(value, min_v, max_v):
+    return max(min_v, min(max_v, value))
 
-STATE_VAC_OFF = 5
-# 진공 흡착을 끄는 상태이다.
 
-STATE_DONE = 6
-# 작업 완료 후 준비 자세로 복귀하는 상태이다.
+def deg_to_pos(deg):
+    deg = clamp(deg, 0, MAX_DEG)
+    return int(deg * MAX_POS / MAX_DEG)
 
-STATE_STOP = 7
-# 비상 정지 또는 정지 상태이다.
 
-STATE_HOME = 8
-# 로봇암을 홈 자세로 이동시키는 상태이다.
+def pos_to_deg(pos):
+    pos = clamp(pos, 0, MAX_POS)
+    return pos * MAX_DEG / MAX_POS
 
-STATE_READY = 9
-# 로봇암을 작업 준비 자세로 이동시키는 상태이다.
 
+def reverse_pos(pos):
+    pos = clamp(pos, 0, MAX_POS)
+    return MAX_POS - pos
 
-POSE_HOME = 0
-# 홈 자세를 의미하는 자세 ID이다.
 
-POSE_READY = 1
-# 작업 준비 자세를 의미하는 자세 ID이다.
+# ==================================================
+# 포트 초기화 / 종료
+# ==================================================
+def init_motor():
+    if not portHandler.openPort():
+        print("[Motor] 포트 열기 실패")
+        return False
 
-POSE_LIFT = 2
-# 물체를 들어 올릴 때 사용하는 리프트 자세 ID이다.
+    if not portHandler.setBaudRate(BAUD):
+        print("[Motor] Baudrate 실패")
+        return False
 
-
-ser = serial.Serial(PORT, BAUDRATE, timeout=0.1)
-# 지정한 포트와 통신 속도로 시리얼 객체를 생성한다.
-# timeout=0.1은 읽기 동작이 있을 경우 최대 0.1초까지만 기다리도록 설정한다.
-
-# 펌프 채널 0 (GPIO 12), 밸브 채널 1 (GPIO 13)
-gripper = ESP32Emulator(pump_channel=0, valve_channel=1)
-
-current_pos = [2048, 2048, 2048, 2048, 2048, 2048, 0]
-# 각 서보의 현재 위치값을 저장하는 리스트이다.
-# FT-SCS15는 일반적으로 0~4095 범위의 위치값을 사용하며, 2048은 중앙 위치에 해당한다.
-
-target_pos = [2048, 2048, 2048, 2048, 2048, 2048, 0]
-# 각 서보가 이동해야 할 목표 위치값을 저장하는 리스트이다.
-
-speed_val = [10, 10, 10, 10, 10, 10, 10]
-# 각 서보가 한 번의 update_servo() 호출에서 이동할 위치 변화량을 저장한다.
-# 값이 클수록 목표 위치까지 빠르게 이동한다.
-
-
-box_type = 0
-# 인식된 박스 종류를 저장하는 변수이다.
-
-rot_z = 0
-# 박스의 Z축 회전각 정보를 저장하는 변수이다.
-
-
-gx = 0
-# 집기 위치의 X축 보정값이다.
-
-gy = 0
-# 집기 위치의 Y축 보정값이다.
-
-gz = 0
-# 집기 위치의 Z축 보정값이다.
-
-
-px = 0
-# 적재 위치의 X축 보정값이다.
-
-py = 0
-# 적재 위치의 Y축 보정값이다.
-
-pz = 0
-# 적재 위치의 Z축 보정값이다.
-
-
-grasp_angle = 2048
-# 그리퍼 또는 손목 회전축의 목표 각도값이다.
-
-
-vacuum_state = False
-# 진공 흡착 상태를 저장한다.
-# False이면 진공 OFF, True이면 진공 ON이다.
-
-state = STATE_IDLE
-# 현재 로봇암의 상태를 저장한다.
-# 초기 상태는 대기 상태이다.
-
-
-state_start_time = 0
-# 현재 상태로 진입한 시각을 밀리초 단위로 저장한다.
-# 진공 흡착 유지 시간과 같은 시간 조건 판단에 사용된다.
-
-
-pose_table = {
-    POSE_HOME:  [2048, 2048, 2048, 2048, 2048, 2048, 0],
-    # 홈 자세이다. 모든 주요 축을 중앙 위치로 둔다.
-
-    POSE_READY: [2048, 1800, 1800, 1600, 1600, 2048, 0],
-    # 작업 시작 전 대기 자세이다.
-
-    POSE_LIFT:  [2048, 1700, 1700, 1500, 1500, 2048, 0],
-    # 물체를 들어 올릴 때 사용하는 자세이다.
-}
-
-
-def millis():
-    # 현재 시간을 밀리초 단위로 반환하는 함수이다.
-
-    return int(time.monotonic() * 1000)
-    # monotonic()은 시스템 시간 변경의 영향을 받지 않는 누적 시간을 반환한다.
-
-
-def checksum(data):
-    # FT-SCS15 패킷에 사용할 체크섬을 계산하는 함수이다.
-
-    return (~sum(data)) & 0xFF
-    # 데이터 합의 비트 반전값을 1바이트로 제한하여 체크섬을 만든다.
-
-
-def write_position(servo_id, position):
-    # 특정 서보 ID에 목표 위치값을 전송하는 함수이다.
-
-    pos_l = position & 0xFF
-    # 위치값의 하위 8비트를 추출한다.
-
-    pos_h = (position >> 8) & 0xFF
-    # 위치값의 상위 8비트를 추출한다.
-
-    packet = [
-        0xFF, 0xFF,
-        # 패킷 시작을 의미하는 헤더이다.
-
-        servo_id,
-        # 제어할 서보의 ID이다.
-
-        7,
-        # 패킷 길이 값이다.
-
-        3,
-        # WRITE 명령어이다.
-
-        0x2A,
-        # Goal Position 주소이다.
-
-        pos_l,
-        # 목표 위치의 하위 바이트이다.
-
-        pos_h,
-        # 목표 위치의 상위 바이트이다.
-
-        0,
-        # 시간 또는 속도 관련 하위 바이트 자리로 사용되는 값이다.
-
-        0
-        # 시간 또는 속도 관련 상위 바이트 자리로 사용되는 값이다.
-    ]
-
-    packet.append(checksum(packet[2:]))
-    # 헤더를 제외한 데이터 영역으로 체크섬을 계산하여 패킷 끝에 추가한다.
-
-    ser.write(bytearray(packet))
-    # 완성된 패킷을 바이트 배열로 변환하여 시리얼 포트로 전송한다.
-
-
-def set_state(new_state):
-    # 로봇암의 상태를 변경하고 상태 시작 시간을 갱신하는 함수이다.
-
-    global state
-    # 전역 변수 state를 수정하기 위해 선언한다.
-
-    global state_start_time
-    # 전역 변수 state_start_time을 수정하기 위해 선언한다.
-
-    state = new_state
-    # 현재 상태를 새로운 상태로 변경한다.
-
-    state_start_time = millis()
-    # 상태가 변경된 시점을 기록한다.
-
-
-def set_pick_place(box, rz, grasp_xyz, place_xyz, angle):
-    # Pick & Place 작업에 필요한 박스 정보, 집기 위치, 적재 위치, 그리퍼 각도를 설정하는 함수이다.
-
-    global box_type
-    # 전역 변수 box_type을 수정하기 위해 선언한다.
-
-    global rot_z
-    # 전역 변수 rot_z를 수정하기 위해 선언한다.
-
-    global gx
-    # 전역 변수 gx를 수정하기 위해 선언한다.
-
-    global gy
-    # 전역 변수 gy를 수정하기 위해 선언한다.
-
-    global gz
-    # 전역 변수 gz를 수정하기 위해 선언한다.
-
-    global px
-    # 전역 변수 px를 수정하기 위해 선언한다.
-
-    global py
-    # 전역 변수 py를 수정하기 위해 선언한다.
-
-    global pz
-    # 전역 변수 pz를 수정하기 위해 선언한다.
-
-    global grasp_angle
-    # 전역 변수 grasp_angle을 수정하기 위해 선언한다.
-
-    box_type = box
-    # 박스 종류를 저장한다.
-
-    rot_z = rz
-    # 박스의 Z축 회전값을 저장한다.
-
-    gx, gy, gz = grasp_xyz
-    # 집기 위치 좌표 보정값을 각각 gx, gy, gz에 저장한다.
-
-    px, py, pz = place_xyz
-    # 적재 위치 좌표 보정값을 각각 px, py, pz에 저장한다.
-
-    grasp_angle = angle
-    # 그리퍼 또는 손목축 각도값을 저장한다.
-
-    set_state(STATE_IDLE)
-    # 작업 정보 설정 후 상태를 대기 상태로 초기화한다.
-
-
-def apply_pose(pose_id):
-    # pose_table에 저장된 자세값을 목표 위치로 적용하는 함수이다.
-
-    if pose_id not in pose_table:
-        # 존재하지 않는 자세 ID가 들어오면 동작하지 않는다.
-
-        return
-        # 함수 실행을 종료한다.
-
-    for i in range(SERVO_COUNT):
-        # 전체 서보 개수만큼 반복한다.
-
-        target_pos[i] = pose_table[pose_id][i]
-        # 지정된 자세의 위치값을 각 서보의 목표 위치로 복사한다.
-
-
-def apply_speed(servo_id, speed):
-    # 특정 서보의 이동 속도값을 설정하는 함수이다.
-
-    if 0 <= servo_id < SERVO_COUNT:
-        # 서보 ID가 유효한 범위 안에 있는지 확인한다.
-
-        speed_val[servo_id] = max(1, speed)
-        # 속도값은 최소 1 이상이 되도록 제한하여 저장한다.
-
-
-def apply_move_servo(servo_id, position):
-    # 특정 서보의 목표 위치를 직접 설정하는 함수이다.
-
-    if 0 <= servo_id < SERVO_COUNT:
-        # 서보 ID가 유효한 범위 안에 있는지 확인한다.
-
-        target_pos[servo_id] = constrain(position, 0, 4095)
-        # 목표 위치값을 0~4095 범위로 제한하여 저장한다.
-
-
-def stop_all():
-    # 모든 서보의 이동을 중단하고 진공 흡착을 끄는 함수이다.
-
-    global vacuum_state
-    # 전역 변수 vacuum_state를 수정하기 위해 선언한다.
-
-    for i in range(SERVO_COUNT):
-        # 전체 서보 개수만큼 반복한다.
-
-        target_pos[i] = current_pos[i]
-        # 목표 위치를 현재 위치와 같게 만들어 추가 이동을 멈춘다.
-
-    vacuum_state = False
-    # 진공 흡착을 끈다.
-
-    set_state(STATE_STOP)
-    # 상태를 정지 상태로 변경한다.
-
-
-def go_home():
-    # 로봇암을 홈 자세로 이동시키기 위한 함수이다.
-
-    set_state(STATE_HOME)
-    # 상태를 홈 이동 상태로 변경한다.
-
-
-def go_ready():
-    # 로봇암을 준비 자세로 이동시키기 위한 함수이다.
-
-    set_state(STATE_READY)
-    # 상태를 준비 자세 이동 상태로 변경한다.
-
-
-def vacuum_on():
-    # 진공 흡착 상태를 ON으로 설정하는 함수이다.
-
-    global vacuum_state
-    # 전역 변수 vacuum_state를 수정하기 위해 선언한다.
-
-    vacuum_state = True
-    # 진공 흡착 상태를 ON으로 변경한다.
-
-
-def vacuum_off():
-    # 진공 흡착 상태를 OFF로 설정하는 함수이다.
-
-    global vacuum_state
-    # 전역 변수 vacuum_state를 수정하기 위해 선언한다.
-
-    vacuum_state = False
-    # 진공 흡착 상태를 OFF로 변경한다.
-
-
-def convert_grasp_xyz_to_target():
-    # 집기 좌표 보정값을 각 서보의 목표 위치값으로 변환하는 함수이다.
-    # 현재 코드는 실제 역기구학이 아니라 2048 기준 오프셋을 각 축에 단순 더하는 방식이다.
-
-    target_pos[0] = constrain(2048 + gx, 0, 4095)
-    # X축 보정값을 1번 축 목표 위치에 반영한다.
-
-    target_pos[1] = constrain(2048 + gy, 0, 4095)
-    # Y축 보정값을 2번 축 목표 위치에 반영한다.
-
-    target_pos[2] = constrain(2048 + gy, 0, 4095)
-    # Y축 보정값을 3번 축에도 동일하게 반영한다.
-    # 병렬 링크 또는 대칭 구동축을 가정한 구조로 볼 수 있다.
-
-    target_pos[3] = constrain(2048 + gz, 0, 4095)
-    # Z축 보정값을 4번 축 목표 위치에 반영한다.
-
-    target_pos[4] = constrain(2048 + gz, 0, 4095)
-    # Z축 보정값을 5번 축에도 동일하게 반영한다.
-    # 병렬 구동 또는 보조축을 가정한 구조로 볼 수 있다.
-
-    target_pos[5] = constrain(grasp_angle, 0, 4095)
-    # 손목 또는 그리퍼 회전축의 목표 각도를 반영한다.
-
-
-def convert_place_xyz_to_target():
-    # 적재 좌표 보정값을 각 서보의 목표 위치값으로 변환하는 함수이다.
-    # 현재 코드는 실제 역기구학이 아니라 2048 기준 오프셋을 각 축에 단순 더하는 방식이다.
-
-    target_pos[0] = constrain(2048 + px, 0, 4095)
-    # X축 적재 보정값을 1번 축 목표 위치에 반영한다.
-
-    target_pos[1] = constrain(2048 + py, 0, 4095)
-    # Y축 적재 보정값을 2번 축 목표 위치에 반영한다.
-
-    target_pos[2] = constrain(2048 + py, 0, 4095)
-    # Y축 적재 보정값을 3번 축에도 동일하게 반영한다.
-
-    target_pos[3] = constrain(2048 + pz, 0, 4095)
-    # Z축 적재 보정값을 4번 축 목표 위치에 반영한다.
-
-    target_pos[4] = constrain(2048 + pz, 0, 4095)
-    # Z축 적재 보정값을 5번 축에도 동일하게 반영한다.
-
-    target_pos[5] = constrain(grasp_angle, 0, 4095)
-    # 손목 또는 그리퍼 회전축의 목표 각도를 유지한다.
-
-
-def update_servo():
-    # 현재 위치가 목표 위치에 가까워지도록 각 서보의 위치를 조금씩 갱신하고 패킷을 전송하는 함수이다.
-    # 이 함수가 반복 호출되면서 서보가 급격히 이동하지 않고 단계적으로 이동한다.
-
-    for i in range(SERVO_COUNT - 1):
-        # 마지막 인덱스는 진공 또는 예비 채널로 보는 구조이므로 위치 제어에서는 제외한다.
-
-        if current_pos[i] < target_pos[i]:
-            # 현재 위치가 목표 위치보다 작으면 증가 방향으로 이동한다.
-
-            current_pos[i] += speed_val[i]
-            # 현재 위치값을 설정된 속도값만큼 증가시킨다.
-
-            if current_pos[i] > target_pos[i]:
-                # 증가 후 목표 위치를 초과했는지 확인한다.
-
-                current_pos[i] = target_pos[i]
-                # 초과한 경우 목표 위치와 정확히 같게 보정한다.
-
-        elif current_pos[i] > target_pos[i]:
-            # 현재 위치가 목표 위치보다 크면 감소 방향으로 이동한다.
-
-            current_pos[i] -= speed_val[i]
-            # 현재 위치값을 설정된 속도값만큼 감소시킨다.
-
-            if current_pos[i] < target_pos[i]:
-                # 감소 후 목표 위치를 지나쳤는지 확인한다.
-
-                current_pos[i] = target_pos[i]
-                # 지나친 경우 목표 위치와 정확히 같게 보정한다.
-
-        write_position(i, current_pos[i])
-        # 계산된 현재 위치값을 해당 서보에 전송한다.
-        # 실제 서보 ID가 1번부터 시작한다면 write_position(i + 1, current_pos[i]) 형태로 수정이 필요할 수 있다.
-
-
-def update_vacuum():
-    # vacuum_state 변수값을 실제 진공 흡착 하드웨어에 반영하는 함수이다.
-
-    set_vacuum_hardware(vacuum_state)
-    # 현재 진공 상태를 하드웨어 제어 함수로 전달한다.
-
-
-def set_vacuum_hardware(on):
-    # 진공 펌프를 제어하는 함수이다.
-    gripper.control(pump_on=on)
-
-
-def is_target_reached():
-    # 모든 제어 대상 서보가 목표 위치에 도달했는지 확인하는 함수이다.
-
-    for i in range(SERVO_COUNT - 1):
-        # 위치 제어 대상 서보만 검사한다.
-
-        if current_pos[i] != target_pos[i]:
-            # 하나라도 현재 위치와 목표 위치가 다르면 아직 도달하지 않은 것이다.
-
-            return False
-            # 목표 위치에 도달하지 않았음을 반환한다.
-
+    print("[Motor] 연결 성공")
     return True
-    # 모든 서보가 목표 위치에 도달했음을 반환한다.
 
 
-def process_state():
-    # 현재 상태에 따라 로봇암의 Pick & Place 동작 순서를 처리하는 상태 머신 함수이다.
-
-    global vacuum_state
-    # 전역 변수 vacuum_state를 수정하기 위해 선언한다.
-
-    current_time = millis()
-    # 현재 시간을 밀리초 단위로 읽어온다.
-
-    if state == STATE_IDLE:
-        # 대기 상태이면 별도 동작을 수행하지 않는다.
-
-        return
-        # 상태 처리 함수를 종료한다.
-
-    elif state == STATE_MOVE_GRASP:
-        # 집기 위치로 이동하는 상태이다.
-
-        convert_grasp_xyz_to_target()
-        # 집기 좌표를 서보 목표 위치로 변환한다.
-
-        if is_target_reached():
-            # 모든 서보가 집기 위치에 도달했는지 확인한다.
-
-            set_state(STATE_VAC_ON)
-            # 도달했다면 진공 흡착 ON 상태로 전환한다.
-
-    elif state == STATE_VAC_ON:
-        # 진공 흡착을 켜는 상태이다.
-
-        vacuum_state = True
-        # 진공 흡착 상태를 ON으로 설정한다.
-
-        if current_time - state_start_time >= 500:
-            # 진공 흡착이 안정될 수 있도록 500ms 이상 기다린다.
-
-            set_state(STATE_LIFT)
-            # 시간이 지나면 리프트 상태로 전환한다.
-
-    elif state == STATE_LIFT:
-        # 물체를 들어 올리는 상태이다.
-
-        apply_pose(POSE_LIFT)
-        # 리프트 자세를 목표 위치로 적용한다.
-
-        if is_target_reached():
-            # 리프트 자세에 도달했는지 확인한다.
-
-            set_state(STATE_MOVE_PLACE)
-            # 도달했다면 적재 위치 이동 상태로 전환한다.
-
-    elif state == STATE_MOVE_PLACE:
-        # 적재 위치로 이동하는 상태이다.
-
-        convert_place_xyz_to_target()
-        # 적재 좌표를 서보 목표 위치로 변환한다.
-
-        if is_target_reached():
-            # 모든 서보가 적재 위치에 도달했는지 확인한다.
-
-            set_state(STATE_VAC_OFF)
-            # 도달했다면 진공 흡착 OFF 상태로 전환한다.
-
-    elif state == STATE_VAC_OFF:
-        # 진공 흡착을 끄는 상태이다.
-
-        vacuum_state = False
-        # 진공 흡착 상태를 OFF로 설정한다.
-
-        if current_time - state_start_time >= 300:
-            # 물체가 떨어질 수 있도록 300ms 이상 기다린다.
-
-            set_state(STATE_DONE)
-            # 시간이 지나면 작업 완료 상태로 전환한다.
-
-    elif state == STATE_DONE:
-        # 작업 완료 후 준비 자세로 복귀하는 상태이다.
-
-        apply_pose(POSE_READY)
-        # 준비 자세를 목표 위치로 적용한다.
-
-        if is_target_reached():
-            # 준비 자세에 도달했는지 확인한다.
-
-            set_state(STATE_IDLE)
-            # 도달했다면 대기 상태로 전환한다.
-
-    elif state == STATE_STOP:
-        # 정지 상태이다.
-
-        return
-        # 추가 동작을 수행하지 않는다.
-
-    elif state == STATE_HOME:
-        # 홈 위치로 이동하는 상태이다.
-
-        apply_pose(POSE_HOME)
-        # 홈 자세를 목표 위치로 적용한다.
-
-        if is_target_reached():
-            # 홈 자세에 도달했는지 확인한다.
-
-            set_state(STATE_IDLE)
-            # 도달했다면 대기 상태로 전환한다.
-
-    elif state == STATE_READY:
-        # 준비 자세로 이동하는 상태이다.
-
-        apply_pose(POSE_READY)
-        # 준비 자세를 목표 위치로 적용한다.
-
-        if is_target_reached():
-            # 준비 자세에 도달했는지 확인한다.
-
-            set_state(STATE_IDLE)
-            # 도달했다면 대기 상태로 전환한다.
+def close_motor():
+    portHandler.closePort()
+    print("[Motor] 포트 종료")
 
 
-def start_task():
-    # Pick & Place 작업을 시작하는 함수이다.
+# ==================================================
+# 읽기 함수
+# ==================================================
+def read_old_position(servo_id):
+    pos, result, error = oldServo.ReadPos(servo_id)
 
-    set_state(STATE_MOVE_GRASP)
-    # 상태를 집기 위치 이동 상태로 변경한다.
+    if result == COMM_SUCCESS:
+        return pos
 
-
-def constrain(value, min_value, max_value):
-    # 입력값을 지정한 최소값과 최대값 사이로 제한하는 함수이다.
-
-    return max(min_value, min(value, max_value))
-    # value가 범위를 벗어나면 min_value 또는 max_value로 제한하여 반환한다.
+    return None
 
 
-def main_loop():
-    # 로봇암 제어를 계속 반복 수행하는 메인 루프이다.
-
-    while True:
-        # 프로그램이 종료될 때까지 무한 반복한다.
-
-        process_state()
-        # 현재 상태에 따른 동작을 처리한다.
-
-        update_servo()
-        # 각 서보의 현재 위치를 목표 위치에 가까워지도록 갱신하고 명령을 전송한다.
-
-        update_vacuum()
-        # 진공 흡착 상태를 하드웨어에 반영한다.
-
-
-if __name__ == "__main__":
-    # 이 파일이 직접 실행될 때만 아래 코드를 실행한다.
-
-    set_pick_place(
-        box=1,
-        # 박스 종류를 1로 설정한다.
-
-        rz=0,
-        # 박스의 Z축 회전값을 0으로 설정한다.
-
-        grasp_xyz=(100, -100, -200),
-        # 집기 위치 보정값을 설정한다.
-
-        place_xyz=(200, -150, -100),
-        # 적재 위치 보정값을 설정한다.
-
-        angle=2048
-        # 그리퍼 또는 손목축 각도를 중앙값으로 설정한다.
+def read_old_temp(servo_id):
+    temp, result, error = oldServo.read1ByteTxRx(
+        servo_id,
+        63
     )
 
-    start_task()
-    # 설정된 Pick & Place 작업을 시작한다.
+    if result == COMM_SUCCESS:
+        return temp
 
-    try:
-        # 메인 루프 실행 중 Ctrl+C 종료를 처리하기 위한 예외 처리 구문이다.
+    return None
 
-        main_loop()
-        # 로봇암 제어 루프를 실행한다.
 
-    except KeyboardInterrupt:
-        # 사용자가 Ctrl+C를 누르면 실행된다.
+def read_new_position(servo_id):
+    pos, result, error = newServo.ReadPos(servo_id)
 
-        stop_all()
-        gripper.release_hardware()  
-        # 모든 서보 이동을 중단하고 진공 흡착을 끈다.
+    if result == COMM_SUCCESS and 0 <= pos <= MAX_POS:
+        return pos
 
-        ser.close()
-        # 시리얼 포트를 닫아 통신 자원을 해제한다.
+    return None
+
+
+# ==================================================
+# 초기 위치 저장 / 복귀
+# ==================================================
+def save_initial_positions():
+    init_pos[ID_1] = read_old_position(ID_1)
+    init_pos[ID_2] = read_old_position(ID_2)
+    init_pos[ID_3] = read_old_position(ID_3)
+    init_pos[ID_4] = read_old_position(ID_4)
+    init_pos[ID_6] = read_old_position(ID_6)
+
+    # ID5는 신형이고 읽기값이 불안정할 수 있어서 항상 0도 기준
+    init_pos[ID_5] = deg_to_pos(0)
+
+    print("\n===== 초기 위치 저장 =====")
+    for sid, pos in init_pos.items():
+        if sid == ID_5:
+            print(f"ID {sid} 초기 Position : {pos} / 고정 0도")
+        else:
+            print(f"ID {sid} 초기 Position : {pos}")
+
+
+def return_to_initial():
+    print("\n===== 초기 위치 복귀 =====")
+
+    if init_pos.get(ID_1) is not None:
+        oldServo.WritePos(ID_1, init_pos[ID_1], 0, OLD_SPEED)
+        print(f"ID1 -> {init_pos[ID_1]}")
+
+    if init_pos.get(ID_2) is not None:
+        oldServo.WritePos(ID_2, init_pos[ID_2], 0, OLD_SPEED)
+        print(f"ID2 -> {init_pos[ID_2]}")
+
+    if init_pos.get(ID_3) is not None:
+        oldServo.WritePos(ID_3, init_pos[ID_3], 0, OLD_SPEED)
+        print(f"ID3 -> {init_pos[ID_3]}")
+
+    if init_pos.get(ID_4) is not None:
+        oldServo.WritePos(ID_4, init_pos[ID_4], OLD_TIME, OLD_SPEED)
+        print(f"ID4 -> {init_pos[ID_4]}")
+
+    if init_pos.get(ID_6) is not None:
+        oldServo.WritePos(ID_6, init_pos[ID_6], 0, OLD_SPEED)
+        print(f"ID6 -> {init_pos[ID_6]}")
+
+    # ID5는 항상 0도 복귀
+    init_pos_5 = deg_to_pos(0)
+    newServo.WritePosEx(
+        ID_5,
+        init_pos_5,
+        NEW_SPEED,
+        NEW_ACC
+    )
+    print(f"ID5 -> 0도 / Position {init_pos_5}")
+
+    time.sleep(3)
+    print("초기 위치 복귀 완료")
+
+
+# ==================================================
+# 각도 계산 함수
+# ==================================================
+def calc_m1_angle_from_pick(pick_coords):
+    x = pick_coords[0]
+    y = pick_coords[1]
+
+    angle = math.degrees(
+        math.atan2(x, y)
+    )
+
+    m1_deg = BASE_DEG_1 + angle
+
+    return clamp(m1_deg, 0, MAX_DEG)
+
+
+def calc_m23_angle_from_ik(ik_angles):
+    """
+    IK 결과에서 M2,3 목표각 추출.
+    보통 ik_angles[1]을 어깨 관절로 사용.
+    """
+    deg = ik_angles[1]
+    return clamp(deg, 0, MAX_DEG)
+
+
+def calc_m45_angle_from_ik(ik_angles):
+    """
+    IK 결과에서 M4,5 목표각 추출.
+    보통 ik_angles[2] 또는 ik_angles[3]을 팔꿈치/손목 전 관절로 사용.
+    현재는 ik_angles[2] 사용.
+    """
+    deg = ik_angles[2]
+    return clamp(deg, 0, MAX_DEG)
+
+
+def calc_m6_angle_from_ik(ik_angles):
+    """
+    IK 결과에서 M6 손목 각도 추출.
+    보통 ik_angles[4] 사용.
+    """
+    deg = ik_angles[4]
+    return clamp(deg, 0, MAX_DEG)
+
+
+# ==================================================
+# 모터 이동 함수
+# ==================================================
+def move_single_1(deg):
+    deg = clamp(deg, 0, MAX_DEG)
+    target_pos = deg_to_pos(deg)
+
+    result, error = oldServo.WritePos(
+        ID_1,
+        target_pos,
+        0,
+        OLD_SPEED
+    )
+
+    time.sleep(0.2)
+
+    temp = read_old_temp(ID_1)
+    current_pos = read_old_position(ID_1)
+    current_deg = pos_to_deg(current_pos) if current_pos is not None else None
+
+    print("\n===== M1 이동 =====")
+    print(f"목표 각도 : {deg:.1f}°")
+    print(f"목표 Position : {target_pos}")
+    print(f"현재 Position : {current_pos}")
+    print(f"현재 각도 : {current_deg:.1f}°" if current_deg is not None else "현재 각도 : 읽기실패")
+    print(f"현재 온도 : {temp}°C")
+    print(f"result : {result}")
+    print(f"error : {error}")
+
+
+def move_sync_2_3(deg):
+    deg = clamp(deg, 0, MAX_DEG)
+    logical_pos = deg_to_pos(deg)
+
+    # ID2 정방향, ID3 역방향
+    pos2 = logical_pos
+    pos3 = reverse_pos(logical_pos)
+
+    result2, error2 = oldServo.WritePos(
+        ID_2,
+        pos2,
+        0,
+        OLD_SPEED
+    )
+
+    result3, error3 = oldServo.WritePos(
+        ID_3,
+        pos3,
+        0,
+        OLD_SPEED
+    )
+
+    time.sleep(0.2)
+
+    cur2 = read_old_position(ID_2)
+    cur3 = read_old_position(ID_3)
+
+    deg2 = pos_to_deg(cur2) if cur2 is not None else None
+    deg3_logic = pos_to_deg(reverse_pos(cur3)) if cur3 is not None else None
+
+    print("\n===== M2, M3 동기화 이동 =====")
+    print(f"입력 각도 : {deg:.1f}°")
+    print(f"ID2 목표 Position : {pos2} | result:{result2} | error:{error2}")
+    print(f"ID3 목표 Position : {pos3} | result:{result3} | error:{error3}")
+    print(f"ID2 현재 Position : {cur2}")
+    print(f"ID3 현재 Position : {cur3}")
+    print(f"ID2 현재 각도 : {deg2:.1f}°" if deg2 is not None else "ID2 현재 각도 : 읽기실패")
+    print(f"ID3 현재 논리각도 : {deg3_logic:.1f}°" if deg3_logic is not None else "ID3 현재 논리각도 : 읽기실패")
+
+
+def move_sync_4_5(deg):
+    deg = clamp(deg, 0, MAX_DEG)
+    logical_pos = deg_to_pos(deg)
+
+    # ID5 신형 정방향, ID4 구형 역방향
+    pos5 = logical_pos
+    pos4 = reverse_pos(logical_pos)
+
+    result5, error5 = newServo.WritePosEx(
+        ID_5,
+        pos5,
+        NEW_SPEED,
+        NEW_ACC
+    )
+
+    result4, error4 = oldServo.WritePos(
+        ID_4,
+        pos4,
+        OLD_TIME,
+        OLD_SPEED
+    )
+
+    time.sleep(0.2)
+
+    old_temp = read_old_temp(ID_4)
+    old_current_pos = read_old_position(ID_4)
+    new_current_pos = read_new_position(ID_5)
+
+    deg4_logic = pos_to_deg(reverse_pos(old_current_pos)) if old_current_pos is not None else None
+    deg5 = pos_to_deg(new_current_pos) if new_current_pos is not None else None
+
+    print("\n===== M4, M5 동기화 이동 =====")
+    print(f"입력 각도 : {deg:.1f}°")
+    print(f"ID5 신형 목표 Position : {pos5} | result:{result5} | error:{error5}")
+    print(f"ID4 구형 목표 Position : {pos4} | result:{result4} | error:{error4}")
+    print(f"ID4 현재 Position : {old_current_pos}")
+    print(f"ID4 현재 논리각도 : {deg4_logic:.1f}°" if deg4_logic is not None else "ID4 현재 논리각도 : 읽기실패")
+    print(f"ID4 온도 : {old_temp}°C")
+    print(f"ID5 현재 Position : {new_current_pos}")
+    print(f"ID5 현재 각도 : {deg5:.1f}°" if deg5 is not None else "ID5 현재 각도 : 읽기실패")
+
+
+def move_single_6(deg):
+    deg = clamp(deg, 0, MAX_DEG)
+    target_pos = deg_to_pos(deg)
+
+    result, error = oldServo.WritePos(
+        ID_6,
+        target_pos,
+        0,
+        OLD_SPEED
+    )
+
+    time.sleep(0.2)
+
+    temp = read_old_temp(ID_6)
+    current_pos = read_old_position(ID_6)
+    current_deg = pos_to_deg(current_pos) if current_pos is not None else None
+
+    print("\n===== M6 손목 이동 =====")
+    print(f"목표 각도 : {deg:.1f}°")
+    print(f"목표 Position : {target_pos}")
+    print(f"현재 Position : {current_pos}")
+    print(f"현재 각도 : {current_deg:.1f}°" if current_deg is not None else "현재 각도 : 읽기실패")
+    print(f"현재 온도 : {temp}°C")
+    print(f"result : {result}")
+    print(f"error : {error}")
