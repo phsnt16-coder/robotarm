@@ -1,89 +1,142 @@
-<?xml version="1.0"?>
-<robot name="packing_robot_corrected">
+import pybullet as p
+import pybullet_data
+import time
+import math
 
-  <link name="base_link">
-    <collision>
-      <origin xyz="0 0 0.0325"/> <geometry>
-        <box size="0.125 0.125 0.065"/>
-      </geometry>
-    </collision>
-  </link>
+cid = p.connect(p.GUI)
+p.setAdditionalSearchPath(pybullet_data.getDataPath())
 
-  <link name="link1_shoulder_mount">
-    <collision>
-      <origin xyz="0 0 0.03"/> <geometry>
-        <box size="0.125 0.125 0.06"/>
-      </geometry>
-    </collision>
-  </link>
+# 카메라 설정
+p.resetDebugVisualizerCamera(
+    cameraDistance=0.5,
+    cameraYaw=45,
+    cameraPitch=-20,
+    cameraTargetPosition=[0,0,0.1]
+)
 
-  <joint name="joint1_base_yaw" type="revolute">
-    <parent link="base_link"/>
-    <child link="link1_shoulder_mount"/>
-    <origin xyz="0 0 0.065"/> <axis xyz="0 0 1"/>
-    <limit lower="-3.14" upper="3.14" effort="20" velocity="2.0"/>
-  </joint>
+p.loadURDF("plane.urdf")
 
-  <link name="link2_upper_arm">
-    <collision>
-      <origin xyz="0 0 0.06"/> <geometry>
-        <box size="0.0485 0.045 0.12"/>
-      </geometry>
-    </collision>
-  </link>
+# 로봇 URDF
+robot = p.loadURDF(
+    r"C:\Users\phsnt\Documents\mybot.urdf",
+    [0,0,0],
+    useFixedBase=True,
+    flags=p.URDF_USE_SELF_COLLISION
+)
 
-  <joint name="joint2_shoulder" type="revolute">
-    <parent link="link1_shoulder_mount"/>
-    <child link="link2_upper_arm"/>
-    <origin xyz="0 -0.016 0.06"/> <axis xyz="1 0 0"/>
-    <limit lower="-1.57" upper="1.57" effort="15" velocity="1.5"/>
-  </joint> 
+# 상자 URDF
+cube = p.loadURDF("cube_small.urdf", [0,-0.2,0.02])
+
+p.setGravity(0,0,-9.8)
+
+num_joints = p.getNumJoints(robot)
+
+sliders = []
+
+# 슬라이더 생성
+for i in range(num_joints):
+
+    info = p.getJointInfo(robot, i)
+    joint_name = info[1].decode("utf-8")
+
+    slider = p.addUserDebugParameter(joint_name,-3.14,3.14,0)
+    sliders.append(slider)
 
 
+# 모든 관절 초기화
+def reset_all_joints(robot):
 
-  <link name="link4_whristarm">
-    <collision>
-      <origin xyz="0 0 0.0775"/> <geometry>
-        <box size="0.041 0.033 0.155"/>
-      </geometry>
-    </collision>
-  </link>
+    for j in range(p.getNumJoints(robot)):
+        p.resetJointState(robot, j, 0)
 
-  <joint name="joint4_whrist" type="revolute">
-    <parent link="link2_upper_arm"/>
-    <child link="link4_whristarm"/>
-    <origin xyz="0 0 0.12"/> <axis xyz="1 0 0"/>
-    <limit lower="-1.57" upper="1.57" effort="15" velocity="1.5"/>
-  </joint>
+    p.stepSimulation()
 
-  <link name="link5_hand"> 
-    <collision>
-      <origin xyz="0.06 0 0.04"/> <geometry>
-        <box size="0.078 0.026 0.126"/>
-      </geometry>
-    </collision>
-  </link>
 
-  <joint name="joint5_hand" type="revolute">
-    <parent link="link4_whristarm"/>
-    <child link="link5_hand"/>
-    <origin xyz="0 0 0.155"/> <axis xyz="1 0 0"/>
-    <limit lower="-2.6" upper="2.6" effort="12" velocity="1.5"/>
-  </joint>
+# 관절 범위 탐색
+def find_joint_limit(robot, joint_id):
 
-  <link name="link6_greaper">
-    <collision>
-      <origin xyz="0 -0.0325 0"/> <geometry>
-        <box size="0.02 0.065 0.02"/>
-      </geometry>
-    </collision>
-  </link>
+    reset_all_joints(robot)
 
-  <joint name="joint7_greaper" type="revolute">
-    <parent link="link5_hand"/>
-    <child link="link6_greaper"/>
-    <origin xyz="0.06 -0.013 0.065"/> <axis xyz="0 1 0"/>
-    <limit lower="-3.14" upper="3.14" effort="20" velocity="2.0"/>
-  </joint>
+    step = 0.02
+    max_angle = 0
+    min_angle = 0
 
-</robot>
+    # 양의 방향 탐색
+    angle = 0
+    while angle < math.pi:
+
+        p.resetJointState(robot, joint_id, angle)
+        p.stepSimulation()
+
+        contacts = p.getContactPoints(bodyA=robot, bodyB=robot)
+
+        if contacts:
+            break
+
+        max_angle = angle
+        angle += step
+
+    # 원위치 복귀
+    p.resetJointState(robot, joint_id, 0)
+    p.stepSimulation()
+
+    # 음의 방향 탐색
+    angle = 0
+    while angle > -math.pi:
+
+        p.resetJointState(robot, joint_id, angle)
+        p.stepSimulation()
+
+        contacts = p.getContactPoints(bodyA=robot, bodyB=robot)
+
+        if contacts:
+            break
+
+        min_angle = angle
+        angle -= step
+
+    p.resetJointState(robot, joint_id, 0)
+    p.stepSimulation()
+
+    print(
+        "joint", joint_id,
+        "range:",
+        round(math.degrees(min_angle),1),
+        "~",
+        round(math.degrees(max_angle),1),
+        "deg"
+    )
+
+
+print("===== 관절 실제 범위 탐색 =====")
+
+for j in range(5):
+    find_joint_limit(robot, j)
+    time.sleep(0.5)
+
+print("================================")
+
+reset_all_joints(robot)
+
+
+# 시뮬레이션 시작
+while p.isConnected():
+
+    # 팔 관절 제어
+    for i in range(0,5):
+
+        target = p.readUserDebugParameter(sliders[i])
+
+        p.setJointMotorControl2(
+            bodyUniqueId=robot,
+            jointIndex=i,
+            controlMode=p.POSITION_CONTROL,
+            targetPosition=target,
+            force=100
+        )
+
+
+    p.stepSimulation()
+    time.sleep(1/240)
+
+p.disconnect()
