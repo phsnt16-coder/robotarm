@@ -224,9 +224,9 @@ if __name__ == "__main__":
     gripper.control(False)
 
     bin_system = LiveBin(
-        200,
-        200,
-        200,
+        300,
+        300,
+        300,
         max_weight=100
     )
 
