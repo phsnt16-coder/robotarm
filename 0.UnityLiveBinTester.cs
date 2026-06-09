@@ -1,0 +1,1604 @@
+using System.Collections.Generic;
+using UnityEngine;
+
+public class UnityLiveBinTester : MonoBehaviour
+{
+    [System.Serializable]
+    public class BoxRotationRule
+    {
+        public string boxLabel;
+
+        [Range(0f, 1f)]
+        public float similarityThreshold;
+
+        public bool allowRotation;
+
+        public bool forceNoRotation;
+
+        public bool forceRotation;
+    }
+
+    public CoordinateConverter converter;
+    public Transform placeTarget;
+
+    [Header("Bin Size - mm")]
+    public float binWidth = 200f;
+    public float binHeight = 200f;
+    public float binDepth = 300f;
+
+    [Header("Bin Origin Offset - mm")]
+    public float binOffsetX = 0f;
+    public float binOffsetY = 0f;
+    public float binOffsetZ = 0f;
+
+    [Header("Packing Priority")]
+    public bool lowerLayerFirst = true;
+    public bool restrictUpperLayerToBottomFootprint = true;
+    public bool enableLookAhead = true;
+
+    public float upperLayerFootprintMargin = 20f;
+
+    public float lowerLayerPenaltyWeight = 100000f;
+    public float heightSpreadWeight = 3000f;
+    public float centerBalanceWeight = 20f;
+    public float edgeFillWeight = 1f;
+    public float rectangleFootprintWeight = 50f;
+
+    [Header("Look Ahead Priority")]
+    public float futureBoxFitPenaltyWeight = 50000f;
+    public float futureBoxFitBonusWeight = 5000f;
+    public float outerFillWeight = 500f;
+
+    [Header("Box Rotation Rules")]
+    public BoxRotationRule[] boxRotationRules =
+    {
+        new BoxRotationRule
+        {
+            boxLabel = "A1",
+            similarityThreshold = 0.80f,
+            allowRotation = true,
+            forceNoRotation = true,
+            forceRotation = false
+        },
+        new BoxRotationRule
+        {
+            boxLabel = "B3",
+            similarityThreshold = 0.95f,
+            allowRotation = true,
+            forceNoRotation = false,
+            forceRotation = false
+        },
+        new BoxRotationRule
+        {
+            boxLabel = "B8",
+            similarityThreshold = 0.95f,
+            allowRotation = true,
+            forceNoRotation = false,
+            forceRotation = false
+        }
+    };
+
+    [Header("Rotation Result")]
+    public bool currentItemRotated = false;
+    public float currentPlaceRotationAngle = 0f;
+
+    [Header("Debug")]
+    public Transform lastTargetBox;
+    public bool printLabelDebug = true;
+    public bool printPositionDebug = true;
+
+    [Header("Gizmo")]
+    public bool drawBinGizmo = true;
+    public bool drawPlacedItemGizmo = true;
+
+    private LiveBin bin;
+    private int itemCount = 0;
+
+    void Start()
+    {
+        bin =
+            new LiveBin(
+                binWidth,
+                binHeight,
+                binDepth,
+                lowerLayerFirst,
+                restrictUpperLayerToBottomFootprint,
+                enableLookAhead,
+                upperLayerFootprintMargin,
+                lowerLayerPenaltyWeight,
+                heightSpreadWeight,
+                centerBalanceWeight,
+                edgeFillWeight,
+                rectangleFootprintWeight,
+                futureBoxFitPenaltyWeight,
+                futureBoxFitBonusWeight,
+                outerFillWeight
+            );
+
+        Debug.Log(
+            "LIVE BIN INITIALIZED | Size: " +
+            binWidth +
+            " x " +
+            binHeight +
+            " x " +
+            binDepth +
+            " | Offset: " +
+            binOffsetX +
+            "," +
+            binOffsetY +
+            "," +
+            binOffsetZ
+        );
+    }
+
+    public bool PreparePlaceTargetForBox(Transform targetBox)
+    {
+        if (targetBox == null)
+        {
+            Debug.LogWarning("적재 좌표 계산 실패: TargetBox 없음");
+            return false;
+        }
+
+        if (converter == null || placeTarget == null)
+        {
+            Debug.LogError("Converter 또는 PlaceTarget 연결 오류");
+            return false;
+        }
+
+        lastTargetBox = targetBox;
+
+        string label = GetBoxLabel(targetBox);
+
+        Item item = CreateItemFromLabel(label);
+
+        if (item == null)
+        {
+            Debug.LogWarning("알 수 없는 박스 종류: " + label);
+            return false;
+        }
+
+        BoxRotationRule rule = GetRotationRule(label);
+
+        item.name = label + "_BOX_" + itemCount;
+
+        itemCount++;
+
+        bool success =
+            bin.PlaceItem(
+                item,
+                rule
+            );
+
+        if (!success)
+        {
+            Debug.LogWarning("[BIN PACKING FAILED] " + item.name);
+            return false;
+        }
+
+        currentItemRotated = item.rotated;
+
+        currentPlaceRotationAngle = item.rotated ? 90f : 0f;
+
+        Vector3 targetPos = GetPlaceTargetPosition(item);
+
+        placeTarget.position = targetPos;
+
+        Debug.Log(
+            "BIN PACKING PLACE TARGET | " +
+            item.name +
+            " → " +
+            targetPos +
+            " | Rotated: " +
+            currentItemRotated +
+            " | RotationAngle: " +
+            currentPlaceRotationAngle +
+            " | Similarity: " +
+            item.widthDepthSimilarity +
+            " | RuleThreshold: " +
+            item.appliedSimilarityThreshold +
+            " | Decision: " +
+            item.rotationDecisionReason
+        );
+
+        if (printPositionDebug)
+        {
+            PrintPositionDebug(
+                item,
+                targetBox,
+                targetPos
+            );
+        }
+
+        bin.PrintState();
+
+        return true;
+    }
+
+    BoxRotationRule GetRotationRule(string label)
+    {
+        if (boxRotationRules == null)
+        {
+            return null;
+        }
+
+        string normalizedLabel = NormalizeLabel(label);
+
+        for (int i = 0; i < boxRotationRules.Length; i++)
+        {
+            if (boxRotationRules[i] == null)
+            {
+                continue;
+            }
+
+            string normalizedRuleLabel =
+                NormalizeLabel(boxRotationRules[i].boxLabel);
+
+            if (normalizedRuleLabel == normalizedLabel)
+            {
+                return boxRotationRules[i];
+            }
+        }
+
+        return null;
+    }
+
+    void PrintPositionDebug(
+        Item item,
+        Transform targetBox,
+        Vector3 targetPos
+    )
+    {
+        Vector3 algorithmCenter =
+            converter.ConvertPythonLoadCoords(
+                binOffsetX + item.x + item.w * 0.5f,
+                binOffsetY + item.y + item.d * 0.5f,
+                binOffsetZ + item.z + item.h * 0.5f
+            );
+
+        Vector3 algorithmBottomCenter =
+            converter.ConvertPythonLoadCoords(
+                binOffsetX + item.x + item.w * 0.5f,
+                binOffsetY + item.y + item.d * 0.5f,
+                binOffsetZ + item.z
+            );
+
+        Debug.Log(
+            "[PLACE DEBUG] ITEM = " +
+            item.name +
+            " | AlgorithmCenter = " +
+            algorithmCenter +
+            " | AlgorithmBottomCenter = " +
+            algorithmBottomCenter +
+            " | PlaceTarget = " +
+            targetPos +
+            " | TargetBoxCurrentPos = " +
+            targetBox.position
+        );
+    }
+
+    string GetBoxLabel(Transform box)
+    {
+        BoxArucoData arucoData = box.GetComponent<BoxArucoData>();
+
+        string rawLabel = "";
+
+        if (
+            arucoData != null &&
+            !string.IsNullOrEmpty(arucoData.boxLabel)
+        )
+        {
+            rawLabel = arucoData.boxLabel;
+        }
+        else
+        {
+            rawLabel = box.name;
+        }
+
+        string normalized = NormalizeLabel(rawLabel);
+
+        if (printLabelDebug)
+        {
+            Debug.Log(
+                "[LABEL DEBUG] ObjectName = " +
+                box.name +
+                " | RawLabel = " +
+                rawLabel +
+                " | Normalized = " +
+                normalized
+            );
+        }
+
+        if (normalized.Contains("A1")) return "A1";
+        if (normalized.Contains("B3")) return "B3";
+        if (normalized.Contains("B8")) return "B8";
+
+        return "UNKNOWN";
+    }
+
+    string NormalizeLabel(string label)
+    {
+        if (string.IsNullOrEmpty(label))
+        {
+            return "";
+        }
+
+        return label
+            .ToUpper()
+            .Replace(" ", "")
+            .Replace("_", "")
+            .Replace("-", "")
+            .Replace(".", "")
+            .Replace("BOX", "");
+    }
+
+    Item CreateItemFromLabel(string label)
+    {
+        string normalized = NormalizeLabel(label);
+
+        if (normalized == "A1")
+        {
+            return new Item("A1", 140f, 50f, 100f);
+        }
+
+        if (normalized == "B3")
+        {
+            return new Item("B3", 120f, 53f, 110f);
+        }
+
+        if (normalized == "B8")
+        {
+            return new Item("B8", 150f, 100f, 100f);
+        }
+
+        return null;
+    }
+
+    public Vector3 GetPlaceTargetPosition(Item item)
+    {
+        return converter.ConvertPythonLoadCoords(
+            binOffsetX + item.x + item.w / 2f,
+            binOffsetY + item.y + item.d / 2f,
+            binOffsetZ + item.z
+        );
+    }
+
+    void OnDrawGizmos()
+    {
+        if (converter == null)
+        {
+            return;
+        }
+
+        if (drawBinGizmo)
+        {
+            DrawBinBoundary();
+        }
+
+        if (
+            Application.isPlaying &&
+            drawPlacedItemGizmo &&
+            bin != null
+        )
+        {
+            DrawPlacedItems();
+        }
+    }
+
+    void DrawBinBoundary()
+    {
+        Vector3 p0 =
+            converter.ConvertPythonLoadCoords(
+                binOffsetX,
+                binOffsetY,
+                binOffsetZ
+            );
+
+        Vector3 p1 =
+            converter.ConvertPythonLoadCoords(
+                binOffsetX + binWidth,
+                binOffsetY + binDepth,
+                binOffsetZ + binHeight
+            );
+
+        Vector3 center = (p0 + p1) * 0.5f;
+
+        Vector3 size =
+            new Vector3(
+                Mathf.Abs(p1.x - p0.x),
+                Mathf.Abs(p1.y - p0.y),
+                Mathf.Abs(p1.z - p0.z)
+            );
+
+        Gizmos.color = new Color(0f, 1f, 0f, 0.35f);
+
+        Gizmos.DrawWireCube(
+            center,
+            size
+        );
+    }
+
+    void DrawPlacedItems()
+    {
+        List<Item> placedItems = bin.GetPlacedItems();
+
+        Gizmos.color = new Color(1f, 1f, 0f, 0.8f);
+
+        for (int i = 0; i < placedItems.Count; i++)
+        {
+            Item item = placedItems[i];
+
+            Vector3 center =
+                converter.ConvertPythonLoadCoords(
+                    binOffsetX + item.x + item.w / 2f,
+                    binOffsetY + item.y + item.d / 2f,
+                    binOffsetZ + item.z + item.h / 2f
+                );
+
+            Vector3 p0 =
+                converter.ConvertPythonLoadCoords(
+                    binOffsetX,
+                    binOffsetY,
+                    binOffsetZ
+                );
+
+            Vector3 p1 =
+                converter.ConvertPythonLoadCoords(
+                    binOffsetX + item.w,
+                    binOffsetY + item.d,
+                    binOffsetZ + item.h
+                );
+
+            Vector3 size =
+                new Vector3(
+                    Mathf.Abs(p1.x - p0.x),
+                    Mathf.Abs(p1.y - p0.y),
+                    Mathf.Abs(p1.z - p0.z)
+                );
+
+            Gizmos.DrawWireCube(
+                center,
+                size
+            );
+        }
+    }
+}
+
+public class Item
+{
+    public string name;
+
+    public float originalW;
+    public float originalH;
+    public float originalD;
+
+    public float w;
+    public float h;
+    public float d;
+
+    public float x;
+    public float y;
+    public float z;
+
+    public bool rotated;
+
+    public float widthDepthSimilarity;
+
+    public float appliedSimilarityThreshold;
+
+    public string rotationDecisionReason;
+
+    public Item(
+        string name,
+        float w,
+        float h,
+        float d
+    )
+    {
+        this.name = name;
+
+        this.originalW = w;
+        this.originalH = h;
+        this.originalD = d;
+
+        this.w = w;
+        this.h = h;
+        this.d = d;
+
+        this.rotated = false;
+
+        this.widthDepthSimilarity = 1f;
+
+        this.appliedSimilarityThreshold = 0.95f;
+
+        this.rotationDecisionReason = "INIT";
+    }
+
+    public void SetPosition(
+        float x,
+        float y,
+        float z
+    )
+    {
+        this.x = x;
+        this.y = y;
+        this.z = z;
+    }
+
+    public Item Clone()
+    {
+        Item cloned =
+            new Item(
+                name,
+                originalW,
+                originalH,
+                originalD
+            );
+
+        cloned.w = w;
+        cloned.h = h;
+        cloned.d = d;
+
+        cloned.x = x;
+        cloned.y = y;
+        cloned.z = z;
+
+        cloned.rotated = rotated;
+        cloned.widthDepthSimilarity = widthDepthSimilarity;
+        cloned.appliedSimilarityThreshold = appliedSimilarityThreshold;
+        cloned.rotationDecisionReason = rotationDecisionReason;
+
+        return cloned;
+    }
+}
+
+public class LiveBin
+{
+    private float W;
+    private float H;
+    private float D;
+
+    private bool lowerLayerFirst;
+    private bool restrictUpperLayerToBottomFootprint;
+    private bool enableLookAhead;
+
+    private float upperLayerFootprintMargin;
+
+    private float lowerLayerPenaltyWeight;
+    private float heightSpreadWeight;
+    private float centerBalanceWeight;
+    private float edgeFillWeight;
+    private float rectangleFootprintWeight;
+
+    private float futureBoxFitPenaltyWeight;
+    private float futureBoxFitBonusWeight;
+    private float outerFillWeight;
+
+    private List<Item> placedItems =
+        new List<Item>();
+
+    private List<Vector3> extremePoints =
+        new List<Vector3>();
+
+    public LiveBin(
+        float W,
+        float H,
+        float D,
+        bool lowerLayerFirst,
+        bool restrictUpperLayerToBottomFootprint,
+        bool enableLookAhead,
+        float upperLayerFootprintMargin,
+        float lowerLayerPenaltyWeight,
+        float heightSpreadWeight,
+        float centerBalanceWeight,
+        float edgeFillWeight,
+        float rectangleFootprintWeight,
+        float futureBoxFitPenaltyWeight,
+        float futureBoxFitBonusWeight,
+        float outerFillWeight
+    )
+    {
+        this.W = W;
+        this.H = H;
+        this.D = D;
+
+        this.lowerLayerFirst = lowerLayerFirst;
+        this.restrictUpperLayerToBottomFootprint = restrictUpperLayerToBottomFootprint;
+        this.enableLookAhead = enableLookAhead;
+
+        this.upperLayerFootprintMargin = upperLayerFootprintMargin;
+
+        this.lowerLayerPenaltyWeight = lowerLayerPenaltyWeight;
+        this.heightSpreadWeight = heightSpreadWeight;
+        this.centerBalanceWeight = centerBalanceWeight;
+        this.edgeFillWeight = edgeFillWeight;
+        this.rectangleFootprintWeight = rectangleFootprintWeight;
+
+        this.futureBoxFitPenaltyWeight = futureBoxFitPenaltyWeight;
+        this.futureBoxFitBonusWeight = futureBoxFitBonusWeight;
+        this.outerFillWeight = outerFillWeight;
+
+        extremePoints.Add(Vector3.zero);
+    }
+
+    public bool PlaceItem(
+        Item item,
+        UnityLiveBinTester.BoxRotationRule rule
+    )
+    {
+        float similarity =
+            CalculateWidthDepthSimilarity(
+                item.originalW,
+                item.originalD
+            );
+
+        bool shouldRotate =
+            DecideRotation(
+                item,
+                rule,
+                similarity
+            );
+
+        Item candidateItem =
+            CreateCandidateByRotationRule(
+                item,
+                shouldRotate,
+                similarity,
+                rule
+            );
+
+        Vector3 bestPoint = Vector3.zero;
+
+        float bestScore = float.MaxValue;
+
+        bool found = false;
+
+        foreach (Vector3 point in extremePoints)
+        {
+            float x = point.x;
+            float y = point.y;
+            float z = point.z;
+
+            if (!Fits(candidateItem, x, y, z))
+            {
+                continue;
+            }
+
+            if (CheckCollision(candidateItem, x, y, z))
+            {
+                continue;
+            }
+
+            if (!CheckUpperLayerFootprint(candidateItem, x, y, z))
+            {
+                continue;
+            }
+
+            float score =
+                CalculateTotalScore(
+                    candidateItem,
+                    x,
+                    y,
+                    z
+                );
+
+            if (score < bestScore)
+            {
+                bestScore = score;
+                bestPoint = point;
+                found = true;
+            }
+        }
+
+        if (!found)
+        {
+            return false;
+        }
+
+        item.w = candidateItem.w;
+        item.h = candidateItem.h;
+        item.d = candidateItem.d;
+
+        item.rotated = candidateItem.rotated;
+
+        item.widthDepthSimilarity = candidateItem.widthDepthSimilarity;
+
+        item.appliedSimilarityThreshold = candidateItem.appliedSimilarityThreshold;
+
+        item.rotationDecisionReason = candidateItem.rotationDecisionReason;
+
+        item.SetPosition(
+            bestPoint.x,
+            bestPoint.y,
+            bestPoint.z
+        );
+
+        placedItems.Add(item);
+
+        UpdateExtremePoints(item);
+
+        return true;
+    }
+
+    float CalculateTotalScore(
+        Item item,
+        float x,
+        float y,
+        float z
+    )
+    {
+        float baseScore =
+            CalculateLayerFirstBalancedScore(
+                item,
+                x,
+                y,
+                z
+            );
+
+        float outerScore =
+            CalculateOuterFillScore(
+                item,
+                x,
+                y
+            ) * outerFillWeight;
+
+        float lookAheadScore =
+            enableLookAhead
+                ? CalculateLookAheadScore(item, x, y, z)
+                : 0f;
+
+        return
+            baseScore +
+            outerScore +
+            lookAheadScore;
+    }
+
+    float CalculateOuterFillScore(
+        Item item,
+        float x,
+        float y
+    )
+    {
+        float leftDistance = x;
+        float rightDistance = W - (x + item.w);
+        float bottomDistance = y;
+        float topDistance = D - (y + item.d);
+
+        float nearestEdgeDistance =
+            Mathf.Min(
+                Mathf.Min(leftDistance, rightDistance),
+                Mathf.Min(bottomDistance, topDistance)
+            );
+
+        float cornerDistanceA =
+            Mathf.Sqrt(x * x + y * y);
+
+        float cornerDistanceB =
+            Mathf.Sqrt(rightDistance * rightDistance + y * y);
+
+        float cornerDistanceC =
+            Mathf.Sqrt(x * x + topDistance * topDistance);
+
+        float cornerDistanceD =
+            Mathf.Sqrt(rightDistance * rightDistance + topDistance * topDistance);
+
+        float nearestCornerDistance =
+            Mathf.Min(
+                Mathf.Min(cornerDistanceA, cornerDistanceB),
+                Mathf.Min(cornerDistanceC, cornerDistanceD)
+            );
+
+        return
+            nearestEdgeDistance +
+            nearestCornerDistance * 0.25f;
+    }
+
+    float CalculateLookAheadScore(
+        Item currentItem,
+        float x,
+        float y,
+        float z
+    )
+    {
+        List<Item> simulatedItems =
+            ClonePlacedItems();
+
+        Item simulatedCurrent =
+            currentItem.Clone();
+
+        simulatedCurrent.SetPosition(
+            x,
+            y,
+            z
+        );
+
+        simulatedItems.Add(simulatedCurrent);
+
+        List<Vector3> simulatedExtremePoints =
+            BuildExtremePointsFromItems(simulatedItems);
+
+        Item[] futureItems =
+        {
+            new Item("A1_LOOKAHEAD", 140f, 50f, 100f),
+            new Item("B3_LOOKAHEAD", 120f, 53f, 110f),
+            new Item("B8_LOOKAHEAD", 150f, 100f, 100f)
+        };
+
+        int fitCount = 0;
+        int failCount = 0;
+
+        float futureScoreSum = 0f;
+
+        for (int i = 0; i < futureItems.Length; i++)
+        {
+            float bestFutureScore;
+
+            bool canFit =
+                CanPlaceFutureItem(
+                    futureItems[i],
+                    simulatedItems,
+                    simulatedExtremePoints,
+                    out bestFutureScore
+                );
+
+            if (canFit)
+            {
+                fitCount++;
+                futureScoreSum += bestFutureScore;
+            }
+            else
+            {
+                failCount++;
+            }
+        }
+
+        return
+            failCount * futureBoxFitPenaltyWeight -
+            fitCount * futureBoxFitBonusWeight +
+            futureScoreSum * 0.05f;
+    }
+
+    bool CanPlaceFutureItem(
+        Item futureItem,
+        List<Item> simulatedItems,
+        List<Vector3> simulatedExtremePoints,
+        out float bestFutureScore
+    )
+    {
+        bestFutureScore = float.MaxValue;
+
+        Item[] candidates =
+        {
+            new Item(
+                futureItem.name,
+                futureItem.originalW,
+                futureItem.originalH,
+                futureItem.originalD
+            ),
+            new Item(
+                futureItem.name,
+                futureItem.originalD,
+                futureItem.originalH,
+                futureItem.originalW
+            )
+            {
+                rotated = true
+            }
+        };
+
+        bool found = false;
+
+        for (int c = 0; c < candidates.Length; c++)
+        {
+            Item candidate = candidates[c];
+
+            for (int p = 0; p < simulatedExtremePoints.Count; p++)
+            {
+                Vector3 point = simulatedExtremePoints[p];
+
+                float x = point.x;
+                float y = point.y;
+                float z = point.z;
+
+                if (!Fits(candidate, x, y, z))
+                {
+                    continue;
+                }
+
+                if (CheckCollisionWithList(candidate, x, y, z, simulatedItems))
+                {
+                    continue;
+                }
+
+                if (!CheckUpperLayerFootprintWithList(candidate, x, y, z, simulatedItems))
+                {
+                    continue;
+                }
+
+                float score =
+                    CalculateSimpleFutureScore(
+                        candidate,
+                        x,
+                        y,
+                        z,
+                        simulatedItems
+                    );
+
+                if (score < bestFutureScore)
+                {
+                    bestFutureScore = score;
+                    found = true;
+                }
+            }
+        }
+
+        return found;
+    }
+
+    float CalculateSimpleFutureScore(
+        Item item,
+        float x,
+        float y,
+        float z,
+        List<Item> simulatedItems
+    )
+    {
+        float topZ = z + item.h;
+
+        float rectanglePenalty =
+            CalculateRectangleFootprintPenaltyWithList(
+                item,
+                x,
+                y,
+                simulatedItems
+            );
+
+        float outerScore =
+            CalculateOuterFillScore(
+                item,
+                x,
+                y
+            );
+
+        return
+            topZ * 10000f +
+            rectanglePenalty * rectangleFootprintWeight +
+            outerScore * outerFillWeight;
+    }
+
+    List<Item> ClonePlacedItems()
+    {
+        List<Item> clonedItems =
+            new List<Item>();
+
+        for (int i = 0; i < placedItems.Count; i++)
+        {
+            clonedItems.Add(
+                placedItems[i].Clone()
+            );
+        }
+
+        return clonedItems;
+    }
+
+    List<Vector3> BuildExtremePointsFromItems(List<Item> items)
+    {
+        List<Vector3> points =
+            new List<Vector3>();
+
+        points.Add(Vector3.zero);
+
+        for (int i = 0; i < items.Count; i++)
+        {
+            Item item = items[i];
+
+            Vector3[] newPoints =
+            {
+                new Vector3(item.x + item.w, item.y, item.z),
+                new Vector3(item.x, item.y + item.d, item.z),
+                new Vector3(item.x, item.y, item.z + item.h)
+            };
+
+            for (int j = 0; j < newPoints.Length; j++)
+            {
+                Vector3 point = newPoints[j];
+
+                if (
+                    point.x < W &&
+                    point.y < D &&
+                    point.z < H &&
+                    !points.Contains(point)
+                )
+                {
+                    points.Add(point);
+                }
+            }
+        }
+
+        return points;
+    }
+
+    bool CheckCollisionWithList(
+        Item item,
+        float x,
+        float y,
+        float z,
+        List<Item> itemList
+    )
+    {
+        foreach (Item p in itemList)
+        {
+            bool separated =
+                x + item.w <= p.x ||
+                p.x + p.w <= x ||
+                y + item.d <= p.y ||
+                p.y + p.d <= y ||
+                z + item.h <= p.z ||
+                p.z + p.h <= z;
+
+            if (!separated)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool CheckUpperLayerFootprintWithList(
+        Item item,
+        float x,
+        float y,
+        float z,
+        List<Item> itemList
+    )
+    {
+        if (!restrictUpperLayerToBottomFootprint)
+        {
+            return true;
+        }
+
+        if (z <= 0.001f)
+        {
+            return true;
+        }
+
+        if (!GetBottomLayerFootprintFromList(
+                itemList,
+                out float minX,
+                out float maxX,
+                out float minY,
+                out float maxY
+            ))
+        {
+            return false;
+        }
+
+        return
+            x >= minX - upperLayerFootprintMargin &&
+            y >= minY - upperLayerFootprintMargin &&
+            x + item.w <= maxX + upperLayerFootprintMargin &&
+            y + item.d <= maxY + upperLayerFootprintMargin;
+    }
+
+    bool GetBottomLayerFootprintFromList(
+        List<Item> itemList,
+        out float minX,
+        out float maxX,
+        out float minY,
+        out float maxY
+    )
+    {
+        minX = float.MaxValue;
+        maxX = float.MinValue;
+        minY = float.MaxValue;
+        maxY = float.MinValue;
+
+        bool foundBottomItem = false;
+
+        for (int i = 0; i < itemList.Count; i++)
+        {
+            Item item = itemList[i];
+
+            if (Mathf.Abs(item.z) > 0.001f)
+            {
+                continue;
+            }
+
+            foundBottomItem = true;
+
+            minX = Mathf.Min(minX, item.x);
+            maxX = Mathf.Max(maxX, item.x + item.w);
+            minY = Mathf.Min(minY, item.y);
+            maxY = Mathf.Max(maxY, item.y + item.d);
+        }
+
+        return foundBottomItem;
+    }
+
+    float CalculateRectangleFootprintPenaltyWithList(
+        Item item,
+        float x,
+        float y,
+        List<Item> itemList
+    )
+    {
+        float minX = x;
+        float maxX = x + item.w;
+        float minY = y;
+        float maxY = y + item.d;
+
+        float totalFootprintArea = item.w * item.d;
+
+        foreach (Item p in itemList)
+        {
+            minX = Mathf.Min(minX, p.x);
+            maxX = Mathf.Max(maxX, p.x + p.w);
+            minY = Mathf.Min(minY, p.y);
+            maxY = Mathf.Max(maxY, p.y + p.d);
+
+            totalFootprintArea += p.w * p.d;
+        }
+
+        float boundingArea =
+            (maxX - minX) *
+            (maxY - minY);
+
+        return boundingArea - totalFootprintArea;
+    }
+
+    bool CheckUpperLayerFootprint(
+        Item item,
+        float x,
+        float y,
+        float z
+    )
+    {
+        if (!restrictUpperLayerToBottomFootprint)
+        {
+            return true;
+        }
+
+        if (z <= 0.001f)
+        {
+            return true;
+        }
+
+        if (!GetBottomLayerFootprint(
+                out float minX,
+                out float maxX,
+                out float minY,
+                out float maxY
+            ))
+        {
+            return false;
+        }
+
+        bool insideBottomFootprintWithMargin =
+            x >= minX - upperLayerFootprintMargin &&
+            y >= minY - upperLayerFootprintMargin &&
+            x + item.w <= maxX + upperLayerFootprintMargin &&
+            y + item.d <= maxY + upperLayerFootprintMargin;
+
+        if (!insideBottomFootprintWithMargin)
+        {
+            Debug.LogWarning(
+                "[UPPER FOOTPRINT REJECTED] " +
+                item.name +
+                " | Candidate(" +
+                x +
+                "," +
+                y +
+                "," +
+                z +
+                ") Size(" +
+                item.w +
+                "," +
+                item.d +
+                ") BottomFootprint X(" +
+                minX +
+                "~" +
+                maxX +
+                ") Y(" +
+                minY +
+                "~" +
+                maxY +
+                ") Margin: " +
+                upperLayerFootprintMargin
+            );
+        }
+
+        return insideBottomFootprintWithMargin;
+    }
+
+    bool GetBottomLayerFootprint(
+        out float minX,
+        out float maxX,
+        out float minY,
+        out float maxY
+    )
+    {
+        minX = float.MaxValue;
+        maxX = float.MinValue;
+        minY = float.MaxValue;
+        maxY = float.MinValue;
+
+        bool foundBottomItem = false;
+
+        for (int i = 0; i < placedItems.Count; i++)
+        {
+            Item item = placedItems[i];
+
+            if (Mathf.Abs(item.z) > 0.001f)
+            {
+                continue;
+            }
+
+            foundBottomItem = true;
+
+            minX = Mathf.Min(minX, item.x);
+            maxX = Mathf.Max(maxX, item.x + item.w);
+            minY = Mathf.Min(minY, item.y);
+            maxY = Mathf.Max(maxY, item.y + item.d);
+        }
+
+        return foundBottomItem;
+    }
+
+    float CalculateWidthDepthSimilarity(
+        float width,
+        float depth
+    )
+    {
+        float shorter = Mathf.Min(width, depth);
+
+        float longer = Mathf.Max(width, depth);
+
+        if (longer <= 0f)
+        {
+            return 1f;
+        }
+
+        return shorter / longer;
+    }
+
+    bool DecideRotation(
+        Item item,
+        UnityLiveBinTester.BoxRotationRule rule,
+        float similarity
+    )
+    {
+        if (rule == null)
+        {
+            item.appliedSimilarityThreshold = 0.95f;
+
+            item.rotationDecisionReason = "NO_RULE_RATIO_DEFAULT";
+
+            return similarity < 0.95f;
+        }
+
+        item.appliedSimilarityThreshold = rule.similarityThreshold;
+
+        if (!rule.allowRotation)
+        {
+            item.rotationDecisionReason = "ALLOW_ROTATION_FALSE";
+
+            return false;
+        }
+
+        if (rule.forceNoRotation)
+        {
+            item.rotationDecisionReason = "FORCE_NO_ROTATION";
+
+            return false;
+        }
+
+        if (rule.forceRotation)
+        {
+            item.rotationDecisionReason = "FORCE_ROTATION";
+
+            return true;
+        }
+
+        if (similarity < rule.similarityThreshold)
+        {
+            item.rotationDecisionReason = "SIMILARITY_BELOW_THRESHOLD_ROTATE";
+
+            return true;
+        }
+
+        item.rotationDecisionReason = "SIMILARITY_ABOVE_THRESHOLD_NO_ROTATE";
+
+        return false;
+    }
+
+    Item CreateCandidateByRotationRule(
+        Item item,
+        bool shouldRotate,
+        float similarity,
+        UnityLiveBinTester.BoxRotationRule rule
+    )
+    {
+        float threshold =
+            rule != null ? rule.similarityThreshold : 0.95f;
+
+        string reason =
+            item.rotationDecisionReason;
+
+        if (shouldRotate)
+        {
+            return new Item(
+                item.name,
+                item.originalD,
+                item.originalH,
+                item.originalW
+            )
+            {
+                rotated = true,
+                widthDepthSimilarity = similarity,
+                appliedSimilarityThreshold = threshold,
+                rotationDecisionReason = reason
+            };
+        }
+
+        return new Item(
+            item.name,
+            item.originalW,
+            item.originalH,
+            item.originalD
+        )
+        {
+            rotated = false,
+            widthDepthSimilarity = similarity,
+            appliedSimilarityThreshold = threshold,
+            rotationDecisionReason = reason
+        };
+    }
+
+    bool Fits(
+        Item item,
+        float x,
+        float y,
+        float z
+    )
+    {
+        return
+            x + item.w <= W &&
+            y + item.d <= D &&
+            z + item.h <= H;
+    }
+
+    bool CheckCollision(
+        Item item,
+        float x,
+        float y,
+        float z
+    )
+    {
+        foreach (Item p in placedItems)
+        {
+            bool separated =
+                x + item.w <= p.x ||
+                p.x + p.w <= x ||
+                y + item.d <= p.y ||
+                p.y + p.d <= y ||
+                z + item.h <= p.z ||
+                p.z + p.h <= z;
+
+            if (!separated)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    float CalculateLayerFirstBalancedScore(
+        Item item,
+        float x,
+        float y,
+        float z
+    )
+    {
+        float layerPenalty = 0f;
+
+        if (lowerLayerFirst)
+        {
+            layerPenalty = z * lowerLayerPenaltyWeight;
+        }
+
+        float topZ = z + item.h;
+
+        float heightSpread =
+            CalculateHeightSpreadAfterPlace(
+                item,
+                x,
+                y,
+                z
+            );
+
+        Vector2 centerAfterPlace =
+            CalculateCenterAfterPlace(
+                item,
+                x,
+                y
+            );
+
+        Vector2 binCenter =
+            new Vector2(
+                W * 0.5f,
+                D * 0.5f
+            );
+
+        float centerDistance =
+            Vector2.Distance(
+                centerAfterPlace,
+                binCenter
+            );
+
+        float edgeFill = x + y;
+
+        float rectanglePenalty =
+            CalculateRectangleFootprintPenalty(
+                item,
+                x,
+                y
+            );
+
+        return
+            layerPenalty +
+            topZ * 10000f +
+            heightSpread * heightSpreadWeight +
+            centerDistance * centerBalanceWeight +
+            edgeFill * edgeFillWeight +
+            rectanglePenalty * rectangleFootprintWeight;
+    }
+
+    float CalculateRectangleFootprintPenalty(
+        Item item,
+        float x,
+        float y
+    )
+    {
+        float minX = x;
+        float maxX = x + item.w;
+        float minY = y;
+        float maxY = y + item.d;
+
+        float totalFootprintArea = item.w * item.d;
+
+        foreach (Item p in placedItems)
+        {
+            minX = Mathf.Min(minX, p.x);
+            maxX = Mathf.Max(maxX, p.x + p.w);
+            minY = Mathf.Min(minY, p.y);
+            maxY = Mathf.Max(maxY, p.y + p.d);
+
+            totalFootprintArea += p.w * p.d;
+        }
+
+        float boundingArea =
+            (maxX - minX) *
+            (maxY - minY);
+
+        return boundingArea - totalFootprintArea;
+    }
+
+    float CalculateHeightSpreadAfterPlace(
+        Item item,
+        float x,
+        float y,
+        float z
+    )
+    {
+        float minTop = z + item.h;
+
+        float maxTop = z + item.h;
+
+        foreach (Item p in placedItems)
+        {
+            float top = p.z + p.h;
+
+            minTop = Mathf.Min(minTop, top);
+            maxTop = Mathf.Max(maxTop, top);
+        }
+
+        return maxTop - minTop;
+    }
+
+    Vector2 CalculateCenterAfterPlace(
+        Item item,
+        float x,
+        float y
+    )
+    {
+        float totalArea = item.w * item.d;
+
+        float weightedX = (x + item.w * 0.5f) * totalArea;
+
+        float weightedY = (y + item.d * 0.5f) * totalArea;
+
+        foreach (Item p in placedItems)
+        {
+            float area = p.w * p.d;
+
+            totalArea += area;
+
+            weightedX += (p.x + p.w * 0.5f) * area;
+
+            weightedY += (p.y + p.d * 0.5f) * area;
+        }
+
+        if (totalArea <= 0f)
+        {
+            return Vector2.zero;
+        }
+
+        return new Vector2(
+            weightedX / totalArea,
+            weightedY / totalArea
+        );
+    }
+
+    void UpdateExtremePoints(Item item)
+    {
+        Vector3[] newPoints =
+        {
+            new Vector3(item.x + item.w, item.y, item.z),
+            new Vector3(item.x, item.y + item.d, item.z),
+            new Vector3(item.x, item.y, item.z + item.h)
+        };
+
+        foreach (Vector3 p in newPoints)
+        {
+            if (
+                p.x < W &&
+                p.y < D &&
+                p.z < H &&
+                !extremePoints.Contains(p)
+            )
+            {
+                extremePoints.Add(p);
+            }
+        }
+    }
+
+    public List<Item> GetPlacedItems()
+    {
+        return placedItems;
+    }
+
+    public void PrintState()
+    {
+        Debug.Log("===== 현재 적재 상태 =====");
+
+        foreach (Item item in placedItems)
+        {
+            Debug.Log(
+                item.name +
+                " 위치(" +
+                item.x +
+                "," +
+                item.y +
+                "," +
+                item.z +
+                ")" +
+                " 크기(" +
+                item.w +
+                "," +
+                item.h +
+                "," +
+                item.d +
+                ")" +
+                " 회전:" +
+                item.rotated +
+                " 유사도:" +
+                item.widthDepthSimilarity +
+                " 기준:" +
+                item.appliedSimilarityThreshold +
+                " 판단:" +
+                item.rotationDecisionReason
+            );
+        }
+    }
+}
