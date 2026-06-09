@@ -2,7 +2,7 @@ from scservo_sdk import *
 import time
 import math
 
-PORT = "/dev/ttyACM0"
+PORT = "/dev/ttyACM1"
 BAUD = 1000000
 
 MAX_POS = 1023
@@ -19,11 +19,18 @@ ID_7 = 7
 OLD_SPEED = 500
 OLD_TIME = 2000
 
+# M2,3 + M6 동시 이동용 속도 분리
+M23_SPEED = 200
+M6_SPEED = 500
+
 NEW_SPEED = 181
 NEW_ACC = 1
 
 BASE_DEG_1 = 110.0
 BASE_DEG_7 = 110.0
+
+# ID3이 너무 낮은 Position으로 가서 기구적으로 걸리는 것을 방지
+ID3_MIN_POS = 540
 
 init_pos = {}
 
@@ -49,6 +56,10 @@ def pos_to_deg(pos):
 def reverse_pos(pos):
     pos = clamp(pos, 0, MAX_POS)
     return MAX_POS - pos
+
+
+def calc_10_percent_tolerance(target_pos):
+    return max(20, int(abs(target_pos) * 0.10))
 
 
 def init_motor():
@@ -96,7 +107,10 @@ def read_new_position(servo_id):
     return None
 
 
-def wait_old_servo_reached(servo_id, target_pos, tolerance=20, timeout=8.0):
+def wait_old_servo_reached(servo_id, target_pos, tolerance=None, timeout=8.0):
+    if tolerance is None:
+        tolerance = calc_10_percent_tolerance(target_pos)
+
     start = time.time()
 
     while time.time() - start < timeout:
@@ -105,7 +119,12 @@ def wait_old_servo_reached(servo_id, target_pos, tolerance=20, timeout=8.0):
         if current_pos is not None:
             error = abs(current_pos - target_pos)
 
-            print(f"ID{servo_id} 현재:{current_pos} 목표:{target_pos} 오차:{error}")
+            print(
+                f"ID{servo_id} 현재:{current_pos} "
+                f"목표:{target_pos} "
+                f"오차:{error} "
+                f"허용:{tolerance}"
+            )
 
             if error <= tolerance:
                 print(f"ID{servo_id} 목표 도달 완료")
@@ -117,7 +136,7 @@ def wait_old_servo_reached(servo_id, target_pos, tolerance=20, timeout=8.0):
     return False
 
 
-def wait_old_sync_reached(targets, tolerance=20, timeout=8.0):
+def wait_old_sync_reached(targets, tolerance=None, timeout=8.0):
     start = time.time()
 
     while time.time() - start < timeout:
@@ -131,10 +150,20 @@ def wait_old_sync_reached(targets, tolerance=20, timeout=8.0):
                 print(f"ID{servo_id} 현재 위치 읽기 실패")
                 continue
 
-            error = abs(current_pos - target_pos)
-            print(f"ID{servo_id} 현재:{current_pos} 목표:{target_pos} 오차:{error}")
+            tol = tolerance
+            if tol is None:
+                tol = calc_10_percent_tolerance(target_pos)
 
-            if error > tolerance:
+            error = abs(current_pos - target_pos)
+
+            print(
+                f"ID{servo_id} 현재:{current_pos} "
+                f"목표:{target_pos} "
+                f"오차:{error} "
+                f"허용:{tol}"
+            )
+
+            if error > tol:
                 all_reached = False
 
         if all_reached:
@@ -254,7 +283,8 @@ def move_sync_2_3(deg):
     logical_pos = deg_to_pos(deg)
 
     pos2 = logical_pos
-    pos3 = reverse_pos(logical_pos)
+    raw_pos3 = reverse_pos(logical_pos)
+    pos3 = max(raw_pos3, ID3_MIN_POS)
 
     result2, error2 = oldServo.WritePos(ID_2, pos2, 0, OLD_SPEED)
     result3, error3 = oldServo.WritePos(ID_3, pos3, 0, OLD_SPEED)
@@ -262,7 +292,8 @@ def move_sync_2_3(deg):
     print("\n===== M2, M3 동기화 이동 =====")
     print(f"입력 각도 : {deg:.1f}°")
     print(f"ID2 목표 Position : {pos2} | result:{result2} | error:{error2}")
-    print(f"ID3 목표 Position : {pos3} | result:{result3} | error:{error3}")
+    print(f"ID3 원래 목표 Position : {raw_pos3}")
+    print(f"ID3 제한 적용 목표 Position : {pos3} | result:{result3} | error:{error3}")
 
     wait_old_sync_reached(
         {
@@ -282,6 +313,92 @@ def move_sync_2_3(deg):
         print(f"ID3 현재 논리각도 : {pos_to_deg(logical3):.1f}°")
 
 
+def move_sync_2_3_6(deg23, deg6):
+    deg23 = clamp(deg23, 0, MAX_DEG)
+    deg6 = clamp(deg6, 0, MAX_DEG)
+
+    logical_pos23 = deg_to_pos(deg23)
+
+    pos2 = logical_pos23
+    raw_pos3 = reverse_pos(logical_pos23)
+    pos3 = max(raw_pos3, ID3_MIN_POS)
+    pos6 = deg_to_pos(deg6)
+
+    result2, error2 = oldServo.WritePos(ID_2, pos2, 0, M23_SPEED)
+    result3, error3 = oldServo.WritePos(ID_3, pos3, 0, M23_SPEED)
+    result6, error6 = oldServo.WritePos(ID_6, pos6, 0, M6_SPEED)
+
+    print("\n===== M2, M3, M6 동시 이동 =====")
+    print(f"M2,3 입력 각도 : {deg23:.1f}°")
+    print(f"M6 입력 각도 : {deg6:.1f}°")
+    print(f"ID2 목표 Position : {pos2} | speed:{M23_SPEED} | result:{result2} | error:{error2}")
+    print(f"ID3 원래 목표 Position : {raw_pos3}")
+    print(f"ID3 제한 적용 목표 Position : {pos3} | speed:{M23_SPEED} | result:{result3} | error:{error3}")
+    print(f"ID6 목표 Position : {pos6} | speed:{M6_SPEED} | result:{result6} | error:{error6}")
+
+    wait_old_sync_reached(
+        {
+            ID_2: pos2,
+            ID_3: pos3,
+            ID_6: pos6
+        }
+    )
+
+    current2 = read_old_position(ID_2)
+    current3 = read_old_position(ID_3)
+    current6 = read_old_position(ID_6)
+
+    if current2 is not None:
+        print(f"ID2 현재 각도 : {pos_to_deg(current2):.1f}°")
+
+    if current3 is not None:
+        logical3 = reverse_pos(current3)
+        print(f"ID3 현재 논리각도 : {pos_to_deg(logical3):.1f}°")
+
+    if current6 is not None:
+        print(f"ID6 현재 각도 : {pos_to_deg(current6):.1f}°")
+
+
+def move_sync_2_3_6_pick(deg2, deg3, deg6):
+    deg2 = clamp(deg2, 0, MAX_DEG)
+    deg3 = clamp(deg3, 0, MAX_DEG)
+    deg6 = clamp(deg6, 0, MAX_DEG)
+
+    pos2 = deg_to_pos(deg2)
+    pos3 = deg_to_pos(deg3)
+    pos6 = deg_to_pos(deg6)
+
+    result2, error2 = oldServo.WritePos(ID_2, pos2, 0, M23_SPEED)
+    result3, error3 = oldServo.WritePos(ID_3, pos3, 0, M23_SPEED)
+    result6, error6 = oldServo.WritePos(ID_6, pos6, 0, M6_SPEED)
+
+    print("\n===== Pick 전용 M2, M3, M6 개별 계산 이동 =====")
+    print(f"ID2 목표 각도 : {deg2:.1f}° | Position:{pos2} | speed:{M23_SPEED} | result:{result2} | error:{error2}")
+    print(f"ID3 목표 각도 : {deg3:.1f}° | Position:{pos3} | speed:{M23_SPEED} | result:{result3} | error:{error3}")
+    print(f"ID6 목표 각도 : {deg6:.1f}° | Position:{pos6} | speed:{M6_SPEED} | result:{result6} | error:{error6}")
+
+    wait_old_sync_reached(
+        {
+            ID_2: pos2,
+            ID_3: pos3,
+            ID_6: pos6
+        }
+    )
+
+    current2 = read_old_position(ID_2)
+    current3 = read_old_position(ID_3)
+    current6 = read_old_position(ID_6)
+
+    if current2 is not None:
+        print(f"ID2 현재 각도 : {pos_to_deg(current2):.1f}°")
+
+    if current3 is not None:
+        print(f"ID3 현재 각도 : {pos_to_deg(current3):.1f}°")
+
+    if current6 is not None:
+        print(f"ID6 현재 각도 : {pos_to_deg(current6):.1f}°")
+
+
 def move_sync_4_5(deg):
     deg = clamp(deg, 0, MAX_DEG)
     logical_pos = deg_to_pos(deg)
@@ -297,7 +414,6 @@ def move_sync_4_5(deg):
     print(f"ID5 신형 목표 Position : {pos5} | result:{result5} | error:{error5}")
     print(f"ID4 구형 목표 Position : {pos4} | result:{result4} | error:{error4}")
 
-    # ID5는 현재 위치 읽기가 불안정하므로 ID4 도달 기준으로 대기
     wait_old_servo_reached(ID_4, pos4)
 
     old_current_pos = read_old_position(ID_4)
