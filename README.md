@@ -35,3 +35,5 @@
 | :--- | :--- | :--- |
 | cap.py | OpenCV | 켈리브레이션용 사진 캡쳐 |
 | cali.py | OpenCV | 카메라 켈리브레이션 |
+
+-tinkercad: https://www.tinkercad.com/things/8VBHXCpHJaR-copy-of-arm-robot?sharecode=DOeki8oGc_kCRa7vBSP4i1k6FnzAdMLj0X2COFG-cVU
