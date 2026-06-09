@@ -1,0 +1,638 @@
+using UnityEngine;
+using UnityEngine.InputSystem;
+using System.Collections;
+
+public class RobotArmAutoSequence : MonoBehaviour
+{
+    public Transform baseJoint;
+    public Transform shoulderJoint;
+    public Transform elbowJoint;
+    public Transform gripperRotationJoint;
+    public Transform gripperJoint;
+
+    public VacuumPickup vacuumPickup;
+
+    public JointLimitProfile jointLimitProfile;
+
+    private Quaternion baseHome;
+    private Quaternion shoulderHome;
+    private Quaternion elbowHome;
+    private Quaternion gripperRotationHome;
+    private Quaternion gripperHome;
+
+    private IKAnglePacket pickIKPacket;
+    private IKAnglePacket placeIKPacket;
+
+    private bool pickIKReady = false;
+    private bool placeIKReady = false;
+    private bool isMoving = false;
+
+    [Header("POSE 1 : Joint Check")]
+    public Vector3 pose1CheckBase = new Vector3(0f, 10f, 0f);
+    public Vector3 pose1CheckShoulder = new Vector3(0f, 0f, 10f);
+    public Vector3 pose1CheckElbow = new Vector3(0f, 0f, -10f);
+    public Vector3 pose1CheckGripperRotation = new Vector3(0f, 0f, 10f);
+    public Vector3 pose1CheckGripper = new Vector3(0f, -10f, 0f);
+
+    [Header("POSE 2 : Origin Z Pose")]
+    public Vector3 pose2Base = Vector3.zero;
+    public Vector3 pose2Shoulder = Vector3.zero;
+    public Vector3 pose2Elbow = Vector3.zero;
+    public Vector3 pose2GripperRotation = new Vector3(0f, 0f, 100f);
+    public Vector3 pose2Gripper = Vector3.zero;
+
+    [Header("POSE 3 : ACT_PICK_READY")]
+    public Vector3 pose3Base = Vector3.zero;
+    public Vector3 pose3Shoulder = new Vector3(0f, 0f, 60f);
+    public Vector3 pose3Elbow = new Vector3(0f, 0f, -60f);
+    public Vector3 pose3GripperRotation = Vector3.zero;
+    public Vector3 pose3Gripper = Vector3.zero;
+
+    [Header("POSE 4 : ACT_PICK_IK")]
+    public Vector3 pose4FallbackBase = Vector3.zero;
+    public Vector3 pose4FallbackShoulder = new Vector3(0f, 0f, 90f);
+    public Vector3 pose4FallbackElbow = new Vector3(0f, 0f, -67f);
+    public Vector3 pose4FallbackGripperRotation = new Vector3(0f, 0f, -25f);
+    public Vector3 pose4FallbackGripper = Vector3.zero;
+
+    [Header("POSE 5 : SAFE_Z_POSE")]
+    public Vector3 pose5Base = Vector3.zero;
+    public Vector3 pose5Shoulder = Vector3.zero;
+    public Vector3 pose5Elbow = Vector3.zero;
+    public Vector3 pose5GripperRotation = new Vector3(0f, 0f, -25f);
+    public Vector3 pose5Gripper = Vector3.zero;
+
+    [Header("POSE 6 : GO_TO_PLACE_IK")]
+    public Vector3 pose6FallbackBase = new Vector3(0f, -90f, 0f);
+    public Vector3 pose6FallbackShoulder = new Vector3(0f, 0f, 90f);
+    public Vector3 pose6FallbackElbow = new Vector3(0f, 0f, -60f);
+    public Vector3 pose6FallbackGripperRotation = new Vector3(0f, 0f, -25f);
+    public Vector3 pose6FallbackGripper = Vector3.zero;
+
+    [Header("Motion")]
+    public float moveSpeed = 40f;
+    public float poseDelay = 0.2f;
+    public bool allowFallbackWhenNoIK = true;
+
+    void Awake()
+    {
+        ResetRuntimeState();
+    }
+
+    void Start()
+    {
+        SaveHomePose();
+
+        ResetRuntimeState();
+
+        ForcePose2OriginOnPlay();
+    }
+
+    void OnDisable()
+    {
+        ResetRuntimeState();
+    }
+
+    void Update()
+    {
+        Keyboard keyboard = Keyboard.current;
+
+        if (keyboard == null)
+        {
+            return;
+        }
+
+        if (keyboard.digit1Key.wasPressedThisFrame)
+        {
+            StartPose1JointCheck();
+        }
+
+        if (keyboard.digit2Key.wasPressedThisFrame)
+        {
+            StartPose2OriginZ();
+        }
+
+        if (keyboard.digit3Key.wasPressedThisFrame)
+        {
+            StartPose3ActPickReady();
+        }
+
+        if (keyboard.digit4Key.wasPressedThisFrame)
+        {
+            StartPose4ActPickIK();
+        }
+
+        if (keyboard.digit5Key.wasPressedThisFrame)
+        {
+            StartPose5SafeZ();
+        }
+
+        if (keyboard.digit6Key.wasPressedThisFrame)
+        {
+            StartPose6GoToPlaceIK();
+        }
+
+        if (keyboard.digit7Key.wasPressedThisFrame)
+        {
+            StartPose7Release();
+        }
+
+        if (keyboard.hKey.wasPressedThisFrame)
+        {
+            StartPose2OriginZ();
+        }
+    }
+
+    void SaveHomePose()
+    {
+        if (
+            baseJoint == null ||
+            shoulderJoint == null ||
+            elbowJoint == null ||
+            gripperRotationJoint == null ||
+            gripperJoint == null
+        )
+        {
+            Debug.LogError("RobotArmAutoSequence 조인트 연결을 확인하세요.");
+            return;
+        }
+
+        baseHome = baseJoint.localRotation;
+        shoulderHome = shoulderJoint.localRotation;
+        elbowHome = elbowJoint.localRotation;
+        gripperRotationHome = gripperRotationJoint.localRotation;
+        gripperHome = gripperJoint.localRotation;
+
+        Debug.Log("HOME ROTATION SAVED");
+    }
+
+    void ForcePose2OriginOnPlay()
+    {
+        Vector3 basePose = pose2Base;
+        Vector3 shoulderPose = pose2Shoulder;
+        Vector3 elbowPose = pose2Elbow;
+        Vector3 gripperRotationPose = pose2GripperRotation;
+        Vector3 gripperPose = pose2Gripper;
+
+        ApplyJointLimits(
+            ref basePose,
+            ref shoulderPose,
+            ref elbowPose,
+            ref gripperRotationPose,
+            ref gripperPose
+        );
+
+        baseJoint.localRotation =
+            baseHome * Quaternion.Euler(basePose);
+
+        shoulderJoint.localRotation =
+            shoulderHome * Quaternion.Euler(shoulderPose);
+
+        elbowJoint.localRotation =
+            elbowHome * Quaternion.Euler(elbowPose);
+
+        gripperRotationJoint.localRotation =
+            gripperRotationHome * Quaternion.Euler(gripperRotationPose);
+
+        gripperJoint.localRotation =
+            gripperHome * Quaternion.Euler(gripperPose);
+
+        Debug.Log("PLAY START → POSE 2 ORIGIN APPLIED");
+    }
+
+    public void SetPickIKAngles(IKAnglePacket packet)
+    {
+        pickIKPacket = packet;
+
+        pickIKReady = true;
+
+        Debug.Log(
+            "PICK IK ANGLES RECEIVED | " +
+            "Base: " + packet.baseY +
+            ", Shoulder: " + packet.shoulderZ +
+            ", Elbow: " + packet.elbowZ +
+            ", GripperRot: " + packet.gripperRotationZ
+        );
+    }
+
+    public void SetPlaceIKAngles(IKAnglePacket packet)
+    {
+        placeIKPacket = packet;
+
+        placeIKReady = true;
+
+        Debug.Log(
+            "PLACE IK ANGLES RECEIVED | " +
+            "Base: " + packet.baseY +
+            ", Shoulder: " + packet.shoulderZ +
+            ", Elbow: " + packet.elbowZ +
+            ", GripperRot: " + packet.gripperRotationZ
+        );
+    }
+
+    public void StartPose1JointCheck()
+    {
+        if (!isMoving)
+        {
+            StartCoroutine(Pose1JointCheckRoutine());
+        }
+    }
+
+    IEnumerator Pose1JointCheckRoutine()
+    {
+        isMoving = true;
+
+        yield return StartCoroutine(
+            MoveToPoseInternal(
+                pose1CheckBase,
+                pose1CheckShoulder,
+                pose1CheckElbow,
+                pose1CheckGripperRotation,
+                pose1CheckGripper
+            )
+        );
+
+        yield return new WaitForSeconds(poseDelay);
+
+        yield return StartCoroutine(
+            MoveToPoseInternal(
+                pose2Base,
+                pose2Shoulder,
+                pose2Elbow,
+                pose2GripperRotation,
+                pose2Gripper
+            )
+        );
+
+        Debug.Log("POSE 1 : JOINT CHECK DONE");
+
+        isMoving = false;
+    }
+
+    public void StartPose2OriginZ()
+    {
+        if (!isMoving)
+        {
+            StartCoroutine(
+                MoveToPose(
+                    pose2Base,
+                    pose2Shoulder,
+                    pose2Elbow,
+                    pose2GripperRotation,
+                    pose2Gripper,
+                    "POSE 2 : ORIGIN Z"
+                )
+            );
+        }
+    }
+
+    public void StartPose3ActPickReady()
+    {
+        if (!isMoving)
+        {
+            StartCoroutine(
+                MoveToPose(
+                    pose3Base,
+                    pose3Shoulder,
+                    pose3Elbow,
+                    pose3GripperRotation,
+                    pose3Gripper,
+                    "POSE 3 : ACT PICK READY"
+                )
+            );
+        }
+    }
+
+    public void StartPose4ActPickIK()
+    {
+        if (!isMoving)
+        {
+            StartCoroutine(Pose4PickIKRoutine());
+        }
+    }
+
+    IEnumerator Pose4PickIKRoutine()
+    {
+        isMoving = true;
+
+        if (pickIKReady)
+        {
+            yield return StartCoroutine(
+                MoveToIKPacketInternal(
+                    pickIKPacket
+                )
+            );
+        }
+        else
+        {
+            if (!allowFallbackWhenNoIK)
+            {
+                Debug.LogWarning("POSE 4 실행 불가: Pick IK 값이 없습니다.");
+                isMoving = false;
+                yield break;
+            }
+
+            Debug.LogWarning("Pick IK 값 없음 → Fallback Pose4 사용");
+
+            yield return StartCoroutine(
+                MoveToPoseInternal(
+                    pose4FallbackBase,
+                    pose4FallbackShoulder,
+                    pose4FallbackElbow,
+                    pose4FallbackGripperRotation,
+                    pose4FallbackGripper
+                )
+            );
+        }
+
+        yield return new WaitForSeconds(poseDelay);
+
+        if (vacuumPickup != null)
+        {
+            vacuumPickup.PickupBox();
+        }
+        else
+        {
+            Debug.LogError("VacuumPickup이 연결되지 않았습니다.");
+        }
+
+        Debug.Log("POSE 4 : ACT PICK DONE");
+
+        isMoving = false;
+    }
+
+    public void StartPose5SafeZ()
+    {
+        if (!isMoving)
+        {
+            StartCoroutine(
+                MoveToPose(
+                    pose5Base,
+                    pose5Shoulder,
+                    pose5Elbow,
+                    pose5GripperRotation,
+                    pose5Gripper,
+                    "POSE 5 : SAFE Z"
+                )
+            );
+        }
+    }
+
+    public void StartPose6GoToPlaceIK()
+    {
+        if (!isMoving)
+        {
+            StartCoroutine(Pose6PlaceIKRoutine());
+        }
+    }
+
+    IEnumerator Pose6PlaceIKRoutine()
+    {
+        isMoving = true;
+
+        if (placeIKReady)
+        {
+            yield return StartCoroutine(
+                MoveToIKPacketInternal(
+                    placeIKPacket
+                )
+            );
+        }
+        else
+        {
+            if (!allowFallbackWhenNoIK)
+            {
+                Debug.LogWarning("POSE 6 실행 불가: Place IK 값이 없습니다.");
+                isMoving = false;
+                yield break;
+            }
+
+            Debug.LogWarning("Place IK 값 없음 → Fallback Pose6 사용");
+
+            yield return StartCoroutine(
+                MoveToPoseInternal(
+                    pose6FallbackBase,
+                    pose6FallbackShoulder,
+                    pose6FallbackElbow,
+                    pose6FallbackGripperRotation,
+                    pose6FallbackGripper
+                )
+            );
+        }
+
+        Debug.Log("POSE 6 : GO TO PLACE DONE");
+
+        isMoving = false;
+    }
+
+    public void StartPose7Release()
+    {
+        if (!isMoving)
+        {
+            StartCoroutine(Pose7ReleaseRoutine());
+        }
+    }
+
+    IEnumerator Pose7ReleaseRoutine()
+    {
+        isMoving = true;
+
+        if (vacuumPickup != null)
+        {
+            vacuumPickup.ReleaseBox();
+        }
+        else
+        {
+            Debug.LogError("VacuumPickup이 연결되지 않았습니다.");
+        }
+
+        yield return new WaitForSeconds(poseDelay);
+
+        Debug.Log("POSE 7 : RELEASE DONE");
+
+        isMoving = false;
+    }
+
+    IEnumerator MoveToIKPacketInternal(IKAnglePacket packet)
+    {
+        Vector3 basePose =
+            new Vector3(0f, packet.baseY, 0f);
+
+        Vector3 shoulderPose =
+            new Vector3(0f, 0f, packet.shoulderZ);
+
+        Vector3 elbowPose =
+            new Vector3(0f, 0f, packet.elbowZ);
+
+        Vector3 gripperRotationPose =
+            new Vector3(0f, 0f, packet.gripperRotationZ);
+
+        Vector3 gripperPose =
+            pose2Gripper;
+
+        yield return StartCoroutine(
+            MoveToPoseInternal(
+                basePose,
+                shoulderPose,
+                elbowPose,
+                gripperRotationPose,
+                gripperPose
+            )
+        );
+    }
+
+    IEnumerator MoveToPose(
+        Vector3 baseOffset,
+        Vector3 shoulderOffset,
+        Vector3 elbowOffset,
+        Vector3 gripperRotationOffset,
+        Vector3 gripperOffset,
+        string arriveMessage
+    )
+    {
+        isMoving = true;
+
+        yield return StartCoroutine(
+            MoveToPoseInternal(
+                baseOffset,
+                shoulderOffset,
+                elbowOffset,
+                gripperRotationOffset,
+                gripperOffset
+            )
+        );
+
+        Debug.Log(arriveMessage);
+
+        isMoving = false;
+    }
+
+    IEnumerator MoveToPoseInternal(
+        Vector3 baseOffset,
+        Vector3 shoulderOffset,
+        Vector3 elbowOffset,
+        Vector3 gripperRotationOffset,
+        Vector3 gripperOffset
+    )
+    {
+        Vector3 limitedBase = baseOffset;
+        Vector3 limitedShoulder = shoulderOffset;
+        Vector3 limitedElbow = elbowOffset;
+        Vector3 limitedGripperRotation = gripperRotationOffset;
+        Vector3 limitedGripper = gripperOffset;
+
+        ApplyJointLimits(
+            ref limitedBase,
+            ref limitedShoulder,
+            ref limitedElbow,
+            ref limitedGripperRotation,
+            ref limitedGripper
+        );
+
+        Quaternion baseTarget =
+            baseHome * Quaternion.Euler(limitedBase);
+
+        Quaternion shoulderTarget =
+            shoulderHome * Quaternion.Euler(limitedShoulder);
+
+        Quaternion elbowTarget =
+            elbowHome * Quaternion.Euler(limitedElbow);
+
+        Quaternion gripperRotationTarget =
+            gripperRotationHome * Quaternion.Euler(limitedGripperRotation);
+
+        Quaternion gripperTarget =
+            gripperHome * Quaternion.Euler(limitedGripper);
+
+        while (
+            Quaternion.Angle(baseJoint.localRotation, baseTarget) > 0.5f ||
+            Quaternion.Angle(shoulderJoint.localRotation, shoulderTarget) > 0.5f ||
+            Quaternion.Angle(elbowJoint.localRotation, elbowTarget) > 0.5f ||
+            Quaternion.Angle(gripperRotationJoint.localRotation, gripperRotationTarget) > 0.5f ||
+            Quaternion.Angle(gripperJoint.localRotation, gripperTarget) > 0.5f
+        )
+        {
+            baseJoint.localRotation =
+                Quaternion.RotateTowards(
+                    baseJoint.localRotation,
+                    baseTarget,
+                    moveSpeed * Time.deltaTime
+                );
+
+            shoulderJoint.localRotation =
+                Quaternion.RotateTowards(
+                    shoulderJoint.localRotation,
+                    shoulderTarget,
+                    moveSpeed * Time.deltaTime
+                );
+
+            elbowJoint.localRotation =
+                Quaternion.RotateTowards(
+                    elbowJoint.localRotation,
+                    elbowTarget,
+                    moveSpeed * Time.deltaTime
+                );
+
+            gripperRotationJoint.localRotation =
+                Quaternion.RotateTowards(
+                    gripperRotationJoint.localRotation,
+                    gripperRotationTarget,
+                    moveSpeed * Time.deltaTime
+                );
+
+            gripperJoint.localRotation =
+                Quaternion.RotateTowards(
+                    gripperJoint.localRotation,
+                    gripperTarget,
+                    moveSpeed * Time.deltaTime
+                );
+
+            yield return null;
+        }
+
+        baseJoint.localRotation = baseTarget;
+        shoulderJoint.localRotation = shoulderTarget;
+        elbowJoint.localRotation = elbowTarget;
+        gripperRotationJoint.localRotation = gripperRotationTarget;
+        gripperJoint.localRotation = gripperTarget;
+    }
+
+    void ApplyJointLimits(
+        ref Vector3 basePose,
+        ref Vector3 shoulderPose,
+        ref Vector3 elbowPose,
+        ref Vector3 gripperRotationPose,
+        ref Vector3 gripperPose
+    )
+    {
+        if (jointLimitProfile == null)
+        {
+            return;
+        }
+
+        basePose =
+            jointLimitProfile.ClampBasePose(basePose);
+
+        shoulderPose =
+            jointLimitProfile.ClampShoulderPose(shoulderPose);
+
+        elbowPose =
+            jointLimitProfile.ClampElbowPose(elbowPose);
+
+        gripperRotationPose =
+            jointLimitProfile.ClampGripperRotationPose(gripperRotationPose);
+
+        gripperPose =
+            jointLimitProfile.ClampGripperPose(gripperPose);
+    }
+
+    [ContextMenu("Reset Runtime State")]
+    public void ResetRuntimeState()
+    {
+        isMoving = false;
+        pickIKReady = false;
+        placeIKReady = false;
+
+        StopAllCoroutines();
+    }
+}
