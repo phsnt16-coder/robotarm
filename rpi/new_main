@@ -21,24 +21,29 @@ from Motor import (
 
     move_single_1,
     move_sync_2_3,
+    move_sync_2_3_6,
     move_sync_4_5,
     move_single_6,
-    move_single_7,
 
-    calc_m1_angle_from_pick,
-    calc_m7_angle_from_marker
+    read_old_position,
+    pos_to_deg,
+    ID_1,
+    ID_7
 )
 
 
 LOAD_OFFSET_X = 0
 LOAD_OFFSET_Y = 250
 LOAD_OFFSET_Z = 0
-LOAD_M1_OFFSET_DEG = 90.0
 
-PICK_BASE_M23 = 70.0
-PICK_BASE_M45 = 5.0
-PICK_IK_GAIN_M23 = 0.05
-PICK_IK_GAIN_M45 = 0.05
+MAX_DEG = 220.0
+
+PICK_M1_CORRECTION_LIMIT = 10.0
+LOAD_M1_ROTATE_DEG = 90.0
+
+PICK_OFFSET_X = 15.0
+PICK_OFFSET_Y = 100.0
+PICK_OFFSET_Z = 120.0
 
 LOAD_BASE_M23 = 75.0
 LOAD_BASE_M45 = 25.0
@@ -46,13 +51,56 @@ LOAD_IK_GAIN_M23 = 0.50
 LOAD_IK_GAIN_M45 = 0.50
 
 BASE_M6 = 85.0
-IK_GAIN_M6 = 0.05
-
-MAX_DEG = 220.0
+M6_CORRECTION_LIMIT = 45.0
 
 
 def clamp(value, min_v, max_v):
     return max(min_v, min(max_v, value))
+
+
+def normalize_angle(angle):
+    angle = angle % 360
+    if angle > 180:
+        angle -= 360
+    return angle
+
+
+def calc_m1_correction_from_pick(coords):
+    x = coords[0]
+    y = coords[1]
+
+    angle = math.degrees(math.atan2(x, y))
+    return clamp(angle, -PICK_M1_CORRECTION_LIMIT, PICK_M1_CORRECTION_LIMIT)
+
+
+def calc_m6_angle_from_marker(matched_angle):
+    marker_angle = normalize_angle(matched_angle)
+    correction = clamp(marker_angle, -M6_CORRECTION_LIMIT, M6_CORRECTION_LIMIT)
+
+    # M6 손목 보정 방향 반전
+    m6 = BASE_M6 - correction
+
+    return clamp(m6, 0, MAX_DEG)
+
+
+def get_current_m1_deg():
+    current_pos = read_old_position(ID_1)
+
+    if current_pos is None:
+        print("[경고] M1 현재 위치 읽기 실패 → 110도 기준 사용")
+        return 110.0
+
+    return pos_to_deg(current_pos)
+
+
+def get_current_m7_deg():
+    current_pos = read_old_position(ID_7)
+
+    if current_pos is None:
+        print("[경고] M7 현재 위치 읽기 실패 → 현재각 확인 불가")
+        return None
+
+    return pos_to_deg(current_pos)
 
 
 def rotate_90_from_pick_to_load(load_coords):
@@ -77,6 +125,66 @@ def coords_mm_to_m(coords):
     ]
 
 
+def calc_ik_motor_targets(coords, marker_angle, ik_controller, mode="pick"):
+    target_position_m = coords_mm_to_m(coords)
+
+    joints_rad = ik_controller.calculate_ik(target_position_m)
+    fk_position = ik_controller.verify_fk(joints_rad)
+    joints_deg = np.degrees(joints_rad).tolist()
+
+    if mode == "pick":
+        m1 = calc_m1_correction_from_pick(coords)
+
+        m23 = 53.5 + (160.0 + joints_deg[1]) * 0.15
+        m45 = 5.0 + abs(joints_deg[2]) * 0.15
+
+        # M6만 ArUco 마커 각도 기반으로 보정
+        m6 = calc_m6_angle_from_marker(marker_angle)
+
+    elif mode == "load":
+        m1 = 0.0
+
+        m23 = LOAD_BASE_M23 + joints_deg[1] * LOAD_IK_GAIN_M23
+        m45 = LOAD_BASE_M45 - joints_deg[2] * LOAD_IK_GAIN_M45
+
+        # Load에서도 같은 손목 보정 유지
+        m6 = calc_m6_angle_from_marker(marker_angle)
+
+    else:
+        m1 = 0.0
+        m23 = 70.0
+        m45 = 5.0
+        m6 = BASE_M6
+
+    # M7은 현재 위치 고정, 계산하지 않음
+    m7 = None
+
+    m23 = clamp(m23, 0, MAX_DEG)
+    m45 = clamp(m45, 0, MAX_DEG)
+    m6 = clamp(m6, 0, MAX_DEG)
+
+    print(f"\n[IK 계산 - {mode}]")
+    print(f"입력 좌표(mm): {coords}")
+    print(f"입력 좌표(m): {target_position_m}")
+    print(f"IK 결과(deg): {joints_deg}")
+    print(f"FK 검증 위치(m): {fk_position}")
+
+    if mode == "pick":
+        print(
+            f"변환 모터각 -> "
+            f"M1보정:{m1:.1f}, M23:{m23:.1f}, "
+            f"M45:{m45:.1f}, M6:{m6:.1f}, M7:현재 위치 고정"
+        )
+    else:
+        print(
+            f"변환 모터각 -> "
+            f"M1:{m1:.1f}, M23:{m23:.1f}, "
+            f"M45:{m45:.1f}, M6:{m6:.1f}, M7:현재 위치 고정"
+        )
+
+    return m1, m23, m45, m6, m7
+
+
 def check_load_lift(pick_m23, pick_m45, load_m23, load_m45):
     diff_m23 = load_m23 - pick_m23
     diff_m45 = load_m45 - pick_m45
@@ -85,7 +193,6 @@ def check_load_lift(pick_m23, pick_m45, load_m23, load_m45):
     print(f"M23 Pick : {pick_m23:.1f}°")
     print(f"M23 Load : {load_m23:.1f}°")
     print(f"M23 변화 : {diff_m23:+.1f}°")
-
     print(f"M45 Pick : {pick_m45:.1f}°")
     print(f"M45 Load : {load_m45:.1f}°")
     print(f"M45 변화 : {diff_m45:+.1f}°")
@@ -96,101 +203,55 @@ def check_load_lift(pick_m23, pick_m45, load_m23, load_m45):
         print("[판정] 주의: Load에서 M23/M45 상승이 부족합니다.")
 
 
-def calc_ik_motor_targets(coords, marker_angle, ik_controller, mode="pick"):
-    m1 = calc_m1_angle_from_pick(coords)
-
-    if mode == "load":
-        m1 = clamp(m1 - LOAD_M1_OFFSET_DEG, 0, MAX_DEG)
-
-    target_position_m = coords_mm_to_m(coords)
-
-    joints_rad = ik_controller.calculate_ik(target_position_m)
-    fk_position = ik_controller.verify_fk(joints_rad)
-    joints_deg = np.degrees(joints_rad).tolist()
-
-    if mode == "pick":
-        m23 = PICK_BASE_M23 + joints_deg[1] * PICK_IK_GAIN_M23
-        m45 = PICK_BASE_M45 + joints_deg[2] * PICK_IK_GAIN_M45
-
-    elif mode == "load":
-        m23 = LOAD_BASE_M23 - joints_deg[1] * LOAD_IK_GAIN_M23
-        m45 = LOAD_BASE_M45 - joints_deg[2] * LOAD_IK_GAIN_M45
-
-    else:
-        m23 = PICK_BASE_M23
-        m45 = PICK_BASE_M45
-
-    m6 = BASE_M6 + joints_deg[3] * IK_GAIN_M6
-
-    m23 = clamp(m23, 0, MAX_DEG)
-    m45 = clamp(m45, 0, MAX_DEG)
-    m6 = clamp(m6, 0, MAX_DEG)
-
-    m7 = calc_m7_angle_from_marker(marker_angle)
-
-    print(f"\n[IK 계산 - {mode}]")	
-    print(f"입력 좌표(mm): {coords}")
-    print(f"입력 좌표(m): {target_position_m}")
-    print(f"IK 결과(deg): {joints_deg}")
-    print(f"FK 검증 위치(m): {fk_position}")
-    print(f"변환 모터각 -> M1:{m1:.1f}, M23:{m23:.1f}, M45:{m45:.1f}, M6:{m6:.1f}, M7:{m7:.1f}")
-
-    return m1, m23, m45, m6, m7
-
-
-def move_pick_sequence(m1, m23, m45, m6, m7):
+def move_pick_sequence(m1, m23, m45, m6, m7, gripper):
     print("\n===== Pick 위치 이동 =====")
+    print(f"M1: {m1:.1f}° / 이미 미세 정렬 완료")
     print(f"M4,5: {m45:.1f}°")
-    print(f"M2,3: {m23:.1f}°")
-    print(f"M6: {m6:.1f}°")
-    print(f"M7: {m7:.1f}°")
-    print(f"M1: {m1:.1f}°")
+    print(f"M2,3 + M6: {m23:.1f}°, {m6:.1f}°")
+    print("M7: 현재 위치 고정")
+    print("Gripper: ON")
 
     print("\n[Pick-1] M4,5 이동")
     move_sync_4_5(m45)
 
-    print("\n[Pick-2] M2,3 이동")
-    move_sync_2_3(m23)
+    print("\n[Pick-2] M2,3 + M6 동시 이동")
+    move_sync_2_3_6(m23, m6)
 
-    print("\n[Pick-3] M6 이동")
-    move_single_6(m6)
+    print("\n[Pick-3] M7 현재 위치 고정")
 
-    print("\n[Pick-4] M7 이동")
-    move_single_7(m7)
-
-    print("\n[Pick-5] M1 이동")
-    move_single_1(m1)
+    print("\n[Pick-4] 그리퍼 흡착 ON")
+    gripper.control(True)
+    time.sleep(1.0)
 
 
 def move_load_sequence(m1, m23, m45, m6, m7):
     print("\n===== Load 위치 이동 =====")
-    print(f"M1: {m1:.1f}°")
-    print(f"M2,3: {m23:.1f}°")
     print(f"M4,5: {m45:.1f}°")
+    print(f"M2,3: {m23:.1f}°")
+    print(f"M1: {m1:.1f}°")
     print(f"M6: {m6:.1f}°")
-    print(f"M7: {m7:.1f}°")
+    print("M7: 현재 위치 고정")
 
-    print("\n[Load-1] M6 이동")
-    move_single_6(m6)
-
-    print("\n[Load-2] M4,5 이동")
+    print("\n[Load-1] M4,5 이동")
     move_sync_4_5(m45)
 
-    print("\n[Load-3] M1 이동")
+    print("\n[Load-2] M2,3 이동")
+    move_sync_2_3(m23)
+
+    print("\n[Load-3] M1 적재 방향 이동")
     move_single_1(m1)
 
-    print("\n[Load-4] M7 이동")
-    move_single_7(m7)
+    print("\n[Load-4] M6 이동")
+    move_single_6(m6)
 
-    print("\n[Load-5] M2,3 이동")
-    move_sync_2_3(m23)
+    print("\n[Load-5] M7 현재 위치 고정")
 
 
 if __name__ == "__main__":
 
     BOX_DATA = {
-        1: {"label": "A_1", "w": 140.0, "h": 50.0,  "d": 100.0, "weight": 1.0},
-        2: {"label": "B_3", "w": 120.0, "h": 53.0,  "d": 110.0, "weight": 1.0},
+        1: {"label": "A_1", "w": 140.0, "h": 50.0, "d": 100.0, "weight": 1.0},
+        2: {"label": "B_3", "w": 120.0, "h": 53.0, "d": 110.0, "weight": 1.0},
         3: {"label": "B_8", "w": 150.0, "h": 100.0, "d": 100.0, "weight": 1.0}
     }
 
@@ -224,9 +285,9 @@ if __name__ == "__main__":
     gripper.control(False)
 
     bin_system = LiveBin(
-        300,
-        300,
-        300,
+        200,
+        200,
+        200,
         max_weight=100
     )
 
@@ -276,22 +337,20 @@ if __name__ == "__main__":
             spec = BOX_DATA[marker_id]
             label = spec["label"]
 
-            if up_axis == 0:
-                w_top = spec["h"]
-                d_top = spec["w"]
-                h_now = spec["d"]
+            w_top = spec["w"]
+            d_top = spec["d"]
+            h_now = spec["h"]
 
-            elif up_axis == 1:
-                w_top = spec["h"]
-                d_top = spec["d"]
-                h_now = spec["w"]
+            raw_pick_coords = pick_coords.copy()
 
-            else:
-                w_top = spec["w"]
-                d_top = spec["d"]
-                h_now = spec["h"]
+            pick_coords[0] += PICK_OFFSET_X
+            pick_coords[1] += PICK_OFFSET_Y
+            pick_coords[2] = h_now + PICK_OFFSET_Z
 
-            pick_coords[2] = h_now
+            print("\n[Pick 좌표 보정]")
+            print(f"ArUco 원본 Pick 좌표 : {raw_pick_coords}")
+            print(f"보정값 X,Y,Z : {PICK_OFFSET_X}, {PICK_OFFSET_Y}, {PICK_OFFSET_Z}")
+            print(f"보정 후 Pick 좌표 : {pick_coords}")
 
             new_item = Item(
                 label,
@@ -314,23 +373,50 @@ if __name__ == "__main__":
                 float(new_item.z + new_item.h)
             ]
 
-            load_robot_coords = rotate_90_from_pick_to_load(
-                load_bin_coords
-            )
+            load_robot_coords = rotate_90_from_pick_to_load(load_bin_coords)
 
-            pick_m1, pick_m23, pick_m45, pick_m6, pick_m7 = calc_ik_motor_targets(
+            pick_m1_correction, pick_m23, pick_m45, pick_m6, pick_m7 = calc_ik_motor_targets(
                 pick_coords,
                 matched_angle,
                 ik_controller,
                 mode="pick"
             )
 
-            load_m1, load_m23, load_m45, load_m6, load_m7 = calc_ik_motor_targets(
+            _, load_m23, load_m45, load_m6, load_m7 = calc_ik_motor_targets(
                 load_robot_coords,
                 matched_angle,
                 ik_controller,
                 mode="load"
             )
+
+            current_m1_deg = get_current_m1_deg()
+            current_m7_deg = get_current_m7_deg()
+
+            pick_m1 = clamp(
+                current_m1_deg + pick_m1_correction,
+                0,
+                MAX_DEG
+            )
+
+            load_m1 = clamp(
+                pick_m1 + LOAD_M1_ROTATE_DEG,
+                0,
+                MAX_DEG
+            )
+
+            print("\n[M1 / M6 / M7 보정]")
+            print(f"현재 M1 각도 : {current_m1_deg:.1f}°")
+            print(f"Pick M1 보정값 : {pick_m1_correction:+.1f}°")
+            print(f"Pick M1 목표 : {pick_m1:.1f}°")
+            print(f"Load M1 목표 : {load_m1:.1f}°")
+            print(f"ArUco 마커 각도 : {matched_angle:.1f}°")
+            print(f"Pick M6 목표 : {pick_m6:.1f}°")
+            print(f"Load M6 목표 : {load_m6:.1f}°")
+
+            if current_m7_deg is not None:
+                print(f"현재 M7 각도 : {current_m7_deg:.1f}° / 고정")
+            else:
+                print("현재 M7 각도 : 읽기 실패 / 이동 명령 없음")
 
             print("\n" + "=" * 60)
             print(f"[테스트 데이터 확정] ID: {marker_id} ({label})")
@@ -341,10 +427,16 @@ if __name__ == "__main__":
             print(f"[회전 여부] {is_rotated}")
 
             print("\n[Pick 모터각]")
-            print(f"M23:{pick_m23:.1f}, M45:{pick_m45:.1f}, M6:{pick_m6:.1f}, M1:{pick_m1:.1f}, M7:{pick_m7:.1f}")
+            print(
+                f"M1:{pick_m1:.1f}, M23:{pick_m23:.1f}, "
+                f"M45:{pick_m45:.1f}, M6:{pick_m6:.1f}, M7:고정"
+            )
 
             print("\n[Load 모터각]")
-            print(f"M23:{load_m23:.1f}, M45:{load_m45:.1f}, M6:{load_m6:.1f}, M1:{load_m1:.1f}, M7:{load_m7:.1f}")
+            print(
+                f"M1:{load_m1:.1f}, M23:{load_m23:.1f}, "
+                f"M45:{load_m45:.1f}, M6:{load_m6:.1f}, M7:고정"
+            )
 
             check_load_lift(
                 pick_m23,
@@ -355,6 +447,9 @@ if __name__ == "__main__":
 
             print("=" * 60)
 
+            input("\nEnter를 누르면 Pick M1 미세 정렬을 합니다...")
+            move_single_1(pick_m1)
+
             input("\nEnter를 누르면 Pick 위치로 이동합니다...")
 
             move_pick_sequence(
@@ -362,14 +457,9 @@ if __name__ == "__main__":
                 pick_m23,
                 pick_m45,
                 pick_m6,
-                pick_m7
+                pick_m7,
+                gripper
             )
-
-            input("\nEnter를 누르면 그리퍼 흡착 ON...")
-
-            print("\n[그리퍼 제어] 흡착 ON")
-            gripper.control(True)
-            time.sleep(1.0)
 
             input("\nEnter를 누르면 Load 위치로 이동합니다...")
 
@@ -404,13 +494,13 @@ if __name__ == "__main__":
                 "pick_m23_angle": pick_m23,
                 "pick_m45_angle": pick_m45,
                 "pick_m6_angle": pick_m6,
-                "pick_m7_angle": pick_m7,
+                "pick_m7_angle": current_m7_deg,
 
                 "load_m1_angle": load_m1,
                 "load_m23_angle": load_m23,
                 "load_m45_angle": load_m45,
                 "load_m6_angle": load_m6,
-                "load_m7_angle": load_m7,
+                "load_m7_angle": current_m7_deg,
 
                 "gripper": "off",
                 "is_rotated": is_rotated,
