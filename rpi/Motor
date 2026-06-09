@@ -1,398 +1,362 @@
-import cv2
-import numpy as np
-import pickle
+from scservo_sdk import *
 import time
 import math
-from multiprocessing import Process, Queue
-from picamera2 import Picamera2
 
-from ArUco import live_aruco_detection
-from py3Dbp import Item, LiveBin
-from receiver import motor_control_receiver
-from visualizer import BinVisualizer
-from gripper import ESP32Emulator
-from robot_ik import RobotIKController
+PORT = "/dev/ttyACM0"
+BAUD = 1000000
 
-from Motor import (
-    init_motor,
-    close_motor,
-    save_initial_positions,
-    return_to_initial,
-
-    move_single_1,
-    move_sync_2_3,
-    move_sync_4_5,
-    move_single_6,
-    move_single_7,
-
-    calc_m1_angle_from_pick,
-    calc_m7_angle_from_marker
-)
-
-
-LOAD_OFFSET_X = 0
-LOAD_OFFSET_Y = 250
-LOAD_OFFSET_Z = 0
-LOAD_M1_OFFSET_DEG = 90.0
-
-BASE_M23 = 70.0
-BASE_M45 = 5.0
-BASE_M6 = 85.0
-
-IK_GAIN_M23 = 0.05
-IK_GAIN_M45 = 0.05
-IK_GAIN_M6 = 0.05
-
+MAX_POS = 1023
 MAX_DEG = 220.0
+
+ID_1 = 1
+ID_2 = 2
+ID_3 = 3
+ID_4 = 4
+ID_5 = 5
+ID_6 = 6
+ID_7 = 7
+
+OLD_SPEED = 500
+OLD_TIME = 2000
+
+NEW_SPEED = 181
+NEW_ACC = 1
+
+BASE_DEG_1 = 110.0
+BASE_DEG_7 = 110.0
+
+init_pos = {}
+
+portHandler = PortHandler(PORT)
+oldServo = scscl(portHandler)
+newServo = sms_sts(portHandler)
 
 
 def clamp(value, min_v, max_v):
     return max(min_v, min(max_v, value))
 
 
-def rotate_90_from_pick_to_load(load_coords):
-    x, y, z = load_coords
-
-    robot_x = -y + LOAD_OFFSET_X
-    robot_y = x + LOAD_OFFSET_Y
-    robot_z = z + LOAD_OFFSET_Z
-
-    return [
-        float(robot_x),
-        float(robot_y),
-        float(robot_z)
-    ]
+def deg_to_pos(deg):
+    deg = clamp(deg, 0, MAX_DEG)
+    return int(deg * MAX_POS / MAX_DEG)
 
 
-def coords_mm_to_m(coords):
-    return [
-        float(coords[0]) / 1000.0,
-        float(coords[1]) / 1000.0,
-        float(coords[2]) / 1000.0
-    ]
+def pos_to_deg(pos):
+    pos = clamp(pos, 0, MAX_POS)
+    return pos * MAX_DEG / MAX_POS
 
 
-def calc_ik_motor_targets(coords, marker_angle, ik_controller, mode="pick"):
-    m1 = calc_m1_angle_from_pick(coords)
-
-    if mode == "load":
-        m1 = clamp(m1 - LOAD_M1_OFFSET_DEG, 0, MAX_DEG)
-
-    target_position_m = coords_mm_to_m(coords)
-
-    joints_rad = ik_controller.calculate_ik(target_position_m)
-    fk_position = ik_controller.verify_fk(joints_rad)
-
-    joints_deg = np.degrees(joints_rad).tolist()
-
-    # IK 각도 반영 비율 적용
-    m23 = BASE_M23 + joints_deg[1] * IK_GAIN_M23
-    m45 = BASE_M45 + joints_deg[2] * IK_GAIN_M45
-    m6 = BASE_M6 + joints_deg[3] * IK_GAIN_M6
-
-    m23 = clamp(m23, 0, MAX_DEG)
-    m45 = clamp(m45, 0, MAX_DEG)
-    m6 = clamp(m6, 0, MAX_DEG)
-
-    m7 = calc_m7_angle_from_marker(marker_angle)
-
-    print(f"\n[IK 계산 - {mode}]")
-    print(f"입력 좌표(mm): {coords}")
-    print(f"입력 좌표(m): {target_position_m}")
-    print(f"IK 결과(deg): {joints_deg}")
-    print(f"FK 검증 위치(m): {fk_position}")
-    print(f"변환 모터각 -> M1:{m1:.1f}, M23:{m23:.1f}, M45:{m45:.1f}, M6:{m6:.1f}, M7:{m7:.1f}")
-
-    return m1, m23, m45, m6, m7
+def reverse_pos(pos):
+    pos = clamp(pos, 0, MAX_POS)
+    return MAX_POS - pos
 
 
-def move_robot_sequence(m1, m23, m45, m6, m7, title="로봇 이동"):
-    print(f"\n===== {title} =====")
-    print(f"M1: {m1:.1f}°")
-    print(f"M6: {m6:.1f}°")
-    print(f"M4,5: {m45:.1f}°")
-    print(f"M7: {m7:.1f}°")
-    print(f"M2,3: {m23:.1f}°")
+def init_motor():
+    if not portHandler.openPort():
+        print("[Motor] 포트 열기 실패")
+        return False
 
-    print("\n[1] M1 이동")
-    move_single_1(m1)
-    time.sleep(1.5)
+    if not portHandler.setBaudRate(BAUD):
+        print("[Motor] Baudrate 실패")
+        return False
 
-    print("\n[2] M6 이동")
-    move_single_6(m6)
-    time.sleep(1.5)
-
-    print("\n[3] M4,5 이동")
-    move_sync_4_5(m45)
-    time.sleep(1.5)
-
-    print("\n[4] M7 이동")
-    move_single_7(m7)
-    time.sleep(1.5)
-
-    print("\n[5] M2,3 이동")
-    move_sync_2_3(m23)
-    time.sleep(1.5)
+    print("[Motor] 연결 성공")
+    return True
 
 
-if __name__ == "__main__":
+def close_motor():
+    portHandler.closePort()
+    print("[Motor] 포트 종료")
 
-    BOX_DATA = {
-        1: {"label": "A_1", "w": 140.0, "h": 50.0,  "d": 100.0, "weight": 1.0},
-        2: {"label": "B_3", "w": 120.0, "h": 53.0,  "d": 110.0, "weight": 1.0},
-        3: {"label": "B_8", "w": 150.0, "h": 100.0, "d": 100.0, "weight": 1.0}
-    }
 
-    try:
-        with open("camera_calibration.pkl", "rb") as f:
-            calib = pickle.load(f)
-    except FileNotFoundError:
-        print("에러: camera_calibration.pkl 파일이 없습니다.")
-        exit()
+def read_old_position(servo_id):
+    pos, result, error = oldServo.ReadPos(servo_id)
 
-    picam2 = Picamera2()
-    config = picam2.create_video_configuration(
-        main={"size": (640, 480), "format": "BGR888"}
-    )
-    picam2.configure(config)
-    picam2.start()
+    if result == COMM_SUCCESS:
+        return pos
 
-    if not init_motor():
-        print("모터 초기화 실패")
-        picam2.stop()
-        exit()
+    return None
 
-    save_initial_positions()
 
-    ik_controller = RobotIKController()
+def read_old_temp(servo_id):
+    temp, result, error = oldServo.read1ByteTxRx(servo_id, 63)
 
-    gripper = ESP32Emulator(
-        pump_channel=0,
-        valve_channel=1
-    )
-    gripper.control(False)
+    if result == COMM_SUCCESS:
+        return temp
 
-    bin_system = LiveBin(
-        200,
-        200,
-        200,
-        max_weight=100
-    )
+    return None
 
-    shared_queue = Queue(maxsize=5)
 
-    p_receiver = Process(
-        target=motor_control_receiver,
-        args=(shared_queue,)
-    )
-    p_receiver.daemon = True
-    p_receiver.start()
+def read_new_position(servo_id):
+    pos, result, error = newServo.ReadPos(servo_id)
 
-    print("\n[시스템 가동]")
-    print("'y' : ArUco 인식 후 Pick → Load 테스트")
-    print("'q' : 초기 위치 복귀 후 종료")
+    if result == COMM_SUCCESS and 0 <= pos <= MAX_POS:
+        return pos
 
-    try:
-        while True:
-            user_input = input("\n상자를 인식하시겠습니까? (y/q): ")
+    return None
 
-            if user_input.lower() == "q":
-                break
 
-            if user_input.lower() != "y":
+def wait_old_servo_reached(servo_id, target_pos, tolerance=20, timeout=8.0):
+    start = time.time()
+
+    while time.time() - start < timeout:
+        current_pos = read_old_position(servo_id)
+
+        if current_pos is not None:
+            error = abs(current_pos - target_pos)
+
+            print(f"ID{servo_id} 현재:{current_pos} 목표:{target_pos} 오차:{error}")
+
+            if error <= tolerance:
+                print(f"ID{servo_id} 목표 도달 완료")
+                return True
+
+        time.sleep(0.1)
+
+    print(f"[경고] ID{servo_id} 목표 도달 실패")
+    return False
+
+
+def wait_old_sync_reached(targets, tolerance=20, timeout=8.0):
+    start = time.time()
+
+    while time.time() - start < timeout:
+        all_reached = True
+
+        for servo_id, target_pos in targets.items():
+            current_pos = read_old_position(servo_id)
+
+            if current_pos is None:
+                all_reached = False
+                print(f"ID{servo_id} 현재 위치 읽기 실패")
                 continue
 
-            result = live_aruco_detection(calib, picam2)
+            error = abs(current_pos - target_pos)
+            print(f"ID{servo_id} 현재:{current_pos} 목표:{target_pos} 오차:{error}")
 
-            if not result:
-                print("[알림] ArUco 마커를 인식하지 못했습니다.")
-                continue
+            if error > tolerance:
+                all_reached = False
 
-            marker_id, matched_angle, pick_coords, up_axis = result
+        if all_reached:
+            print("동기화 모터 목표 도달 완료")
+            return True
 
-            pick_coords = [
-                float(pick_coords[0]),
-                float(pick_coords[1]),
-                float(pick_coords[2])
-            ]
+        time.sleep(0.1)
 
-            matched_angle = float(matched_angle)
+    print("[경고] 동기화 모터 목표 도달 실패")
+    return False
 
-            if marker_id not in BOX_DATA:
-                print(f"[알림] 등록되지 않은 Marker ID: {marker_id}")
-                continue
 
-            spec = BOX_DATA[marker_id]
-            label = spec["label"]
+def save_initial_positions():
+    init_pos[ID_1] = read_old_position(ID_1)
+    init_pos[ID_2] = read_old_position(ID_2)
+    init_pos[ID_3] = read_old_position(ID_3)
+    init_pos[ID_4] = read_old_position(ID_4)
+    init_pos[ID_6] = read_old_position(ID_6)
+    init_pos[ID_7] = read_old_position(ID_7)
 
-            if up_axis == 0:
-                w_top = spec["h"]
-                d_top = spec["w"]
-                h_now = spec["d"]
+    init_pos[ID_5] = deg_to_pos(0)
 
-            elif up_axis == 1:
-                w_top = spec["h"]
-                d_top = spec["d"]
-                h_now = spec["w"]
+    print("\n===== 초기 위치 저장 =====")
+    for sid, pos in init_pos.items():
+        if sid == ID_5:
+            print(f"ID {sid} 초기 Position : {pos} / 고정 0도")
+        else:
+            print(f"ID {sid} 초기 Position : {pos}")
 
-            else:
-                w_top = spec["w"]
-                d_top = spec["d"]
-                h_now = spec["h"]
 
-            pick_coords[2] = h_now
+def return_to_initial():
+    print("\n===== 초기 위치 복귀 =====")
 
-            new_item = Item(
-                label,
-                w_top,
-                h_now,
-                d_top,
-                spec["weight"]
-            )
+    if init_pos.get(ID_1) is not None:
+        oldServo.WritePos(ID_1, init_pos[ID_1], 0, OLD_SPEED)
+        wait_old_servo_reached(ID_1, init_pos[ID_1])
+        print(f"ID1 -> {init_pos[ID_1]}")
 
-            success, is_rotated = bin_system.place_item(new_item)
+    if init_pos.get(ID_2) is not None:
+        oldServo.WritePos(ID_2, init_pos[ID_2], 0, OLD_SPEED)
+        wait_old_servo_reached(ID_2, init_pos[ID_2])
+        print(f"ID2 -> {init_pos[ID_2]}")
 
-            if not success:
-                print(f"\n>>> [알림] {label} 적재 공간 부족")
-                gripper.control(False)
-                continue
+    if init_pos.get(ID_3) is not None:
+        oldServo.WritePos(ID_3, init_pos[ID_3], 0, OLD_SPEED)
+        wait_old_servo_reached(ID_3, init_pos[ID_3])
+        print(f"ID3 -> {init_pos[ID_3]}")
 
-            load_bin_coords = [
-                float(new_item.x + new_item.w / 2),
-                float(new_item.y + new_item.d / 2),
-                float(new_item.z + new_item.h)
-            ]
+    if init_pos.get(ID_4) is not None:
+        oldServo.WritePos(ID_4, init_pos[ID_4], OLD_TIME, OLD_SPEED)
+        wait_old_servo_reached(ID_4, init_pos[ID_4])
+        print(f"ID4 -> {init_pos[ID_4]}")
 
-            load_robot_coords = rotate_90_from_pick_to_load(
-                load_bin_coords
-            )
+    if init_pos.get(ID_6) is not None:
+        oldServo.WritePos(ID_6, init_pos[ID_6], 0, OLD_SPEED)
+        wait_old_servo_reached(ID_6, init_pos[ID_6])
+        print(f"ID6 -> {init_pos[ID_6]}")
 
-            pick_m1, pick_m23, pick_m45, pick_m6, pick_m7 = calc_ik_motor_targets(
-                pick_coords,
-                matched_angle,
-                ik_controller,
-                mode="pick"
-            )
+    if init_pos.get(ID_7) is not None:
+        oldServo.WritePos(ID_7, init_pos[ID_7], 0, OLD_SPEED)
+        wait_old_servo_reached(ID_7, init_pos[ID_7])
+        print(f"ID7 -> {init_pos[ID_7]}")
 
-            load_m1, load_m23, load_m45, load_m6, load_m7 = calc_ik_motor_targets(
-                load_robot_coords,
-                matched_angle,
-                ik_controller,
-                mode="load"
-            )
+    init_pos_5 = deg_to_pos(0)
+    newServo.WritePosEx(ID_5, init_pos_5, NEW_SPEED, NEW_ACC)
+    print(f"ID5 -> 0도 / Position {init_pos_5}")
 
-            print("\n" + "=" * 60)
-            print(f"[테스트 데이터 확정] ID: {marker_id} ({label})")
-            print(f"[마커 각도] {matched_angle:.1f}°")
-            print(f"[Pick 좌표] {pick_coords}")
-            print(f"[Load Bin 좌표] {load_bin_coords}")
-            print(f"[Load Robot 좌표] {load_robot_coords}")
-            print(f"[회전 여부] {is_rotated}")
+    print("초기 위치 복귀 완료")
 
-            print("\n[Pick 모터각]")
-            print(f"M23:{pick_m23:.1f}, M45:{pick_m45:.1f}, M6:{pick_m6:.1f}, M1:{pick_m1:.1f}, M7:{pick_m7:.1f}")
 
-            print("\n[Load 모터각]")
-            print(f"M23:{load_m23:.1f}, M45:{load_m45:.1f}, M6:{load_m6:.1f}, M1:{load_m1:.1f}, M7:{load_m7:.1f}")
-            print("=" * 60)
+def calc_m1_angle_from_pick(pick_coords):
+    x = pick_coords[0]
+    y = pick_coords[1]
 
-            input("\nEnter를 누르면 Pick 위치로 이동합니다...")
+    angle = math.degrees(math.atan2(x, y))
+    m1_deg = BASE_DEG_1 + angle
 
-            move_robot_sequence(
-                pick_m1,
-                pick_m23,
-                pick_m45,
-                pick_m6,
-                pick_m7,
-                title="Pick 위치 이동"
-            )
+    return clamp(m1_deg, 0, MAX_DEG)
 
-            input("\nEnter를 누르면 그리퍼 흡착 ON...")
 
-            print("\n[그리퍼 제어] 흡착 ON")
-            gripper.control(True)
-            time.sleep(1.0)
+def calc_m7_angle_from_marker(matched_angle):
+    marker_angle = matched_angle % 360
 
-            input("\nEnter를 누르면 Load 위치로 이동합니다...")
+    if marker_angle > 180:
+        marker_angle -= 360
 
-            move_robot_sequence(
-                load_m1,
-                load_m23,
-                load_m45,
-                load_m6,
-                load_m7,
-                title="Load 위치 이동"
-            )
+    m7_deg = BASE_DEG_7 + marker_angle
 
-            input("\nEnter를 누르면 그리퍼 OFF 후 적재합니다...")
+    return clamp(m7_deg, 0, MAX_DEG)
 
-            print("\n[그리퍼 제어] 흡착 OFF")
-            gripper.control(False)
-            time.sleep(1.0)
 
-            print("\n[적재 완료]")
-            bin_system.print_state()
+def move_single_1(deg):
+    deg = clamp(deg, 0, MAX_DEG)
+    target_pos = deg_to_pos(deg)
 
-            visualizer = BinVisualizer(bin_system)
-            visualizer.update_plot()
+    result, error = oldServo.WritePos(ID_1, target_pos, 0, OLD_SPEED)
 
-            packet_payload = {
-                "label": label,
-                "pick": pick_coords,
-                "load": load_robot_coords,
-                "load_bin": load_bin_coords,
-                "angle": matched_angle,
+    print("\n===== M1 이동 =====")
+    print(f"목표 각도 : {deg:.1f}°")
+    print(f"목표 Position : {target_pos}")
+    print(f"result : {result}")
+    print(f"error : {error}")
 
-                "pick_m1_angle": pick_m1,
-                "pick_m23_angle": pick_m23,
-                "pick_m45_angle": pick_m45,
-                "pick_m6_angle": pick_m6,
-                "pick_m7_angle": pick_m7,
+    wait_old_servo_reached(ID_1, target_pos)
 
-                "load_m1_angle": load_m1,
-                "load_m23_angle": load_m23,
-                "load_m45_angle": load_m45,
-                "load_m6_angle": load_m6,
-                "load_m7_angle": load_m7,
+    current_pos = read_old_position(ID_1)
+    temp = read_old_temp(ID_1)
+    current_deg = pos_to_deg(current_pos) if current_pos is not None else None
 
-                "gripper": "off",
-                "is_rotated": is_rotated,
-                "success": success
-            }
+    print(f"현재 Position : {current_pos}")
+    print(f"현재 각도 : {current_deg:.1f}°" if current_deg is not None else "현재 각도 : 읽기실패")
+    print(f"현재 온도 : {temp}°C")
 
-            if not shared_queue.full():
-                shared_queue.put(packet_payload)
-                print("[전송 완료] receiver.py로 데이터 전송")
-            else:
-                print("[알림] Queue가 가득 차서 데이터 전송 실패")
 
-    finally:
-        print("\n[종료 처리]")
+def move_sync_2_3(deg):
+    deg = clamp(deg, 0, MAX_DEG)
+    logical_pos = deg_to_pos(deg)
 
-        try:
-            gripper.control(False)
-            gripper.release_hardware()
-        except Exception as e:
-            print(f"[그리퍼 종료 오류] {e}")
+    pos2 = logical_pos
+    pos3 = reverse_pos(logical_pos)
 
-        try:
-            return_to_initial()
-        except Exception as e:
-            print(f"[초기 위치 복귀 오류] {e}")
+    result2, error2 = oldServo.WritePos(ID_2, pos2, 0, OLD_SPEED)
+    result3, error3 = oldServo.WritePos(ID_3, pos3, 0, OLD_SPEED)
 
-        try:
-            picam2.stop()
-        except Exception as e:
-            print(f"[카메라 종료 오류] {e}")
+    print("\n===== M2, M3 동기화 이동 =====")
+    print(f"입력 각도 : {deg:.1f}°")
+    print(f"ID2 목표 Position : {pos2} | result:{result2} | error:{error2}")
+    print(f"ID3 목표 Position : {pos3} | result:{result3} | error:{error3}")
 
-        try:
-            close_motor()
-        except Exception as e:
-            print(f"[모터 종료 오류] {e}")
+    wait_old_sync_reached(
+        {
+            ID_2: pos2,
+            ID_3: pos3
+        }
+    )
 
-        try:
-            p_receiver.terminate()
-        except Exception as e:
-            print(f"[receiver 종료 오류] {e}")
+    current2 = read_old_position(ID_2)
+    current3 = read_old_position(ID_3)
 
-        print("\n시스템을 종료합니다.")
+    if current2 is not None:
+        print(f"ID2 현재 각도 : {pos_to_deg(current2):.1f}°")
+
+    if current3 is not None:
+        logical3 = reverse_pos(current3)
+        print(f"ID3 현재 논리각도 : {pos_to_deg(logical3):.1f}°")
+
+
+def move_sync_4_5(deg):
+    deg = clamp(deg, 0, MAX_DEG)
+    logical_pos = deg_to_pos(deg)
+
+    pos5 = logical_pos
+    pos4 = reverse_pos(logical_pos)
+
+    result5, error5 = newServo.WritePosEx(ID_5, pos5, NEW_SPEED, NEW_ACC)
+    result4, error4 = oldServo.WritePos(ID_4, pos4, OLD_TIME, OLD_SPEED)
+
+    print("\n===== M4, M5 동기화 이동 =====")
+    print(f"입력 각도 : {deg:.1f}°")
+    print(f"ID5 신형 목표 Position : {pos5} | result:{result5} | error:{error5}")
+    print(f"ID4 구형 목표 Position : {pos4} | result:{result4} | error:{error4}")
+
+    # ID5는 현재 위치 읽기가 불안정하므로 ID4 도달 기준으로 대기
+    wait_old_servo_reached(ID_4, pos4)
+
+    old_current_pos = read_old_position(ID_4)
+    old_temp = read_old_temp(ID_4)
+    new_current_pos = read_new_position(ID_5)
+
+    if old_current_pos is not None:
+        old_logical_pos = reverse_pos(old_current_pos)
+        old_current_deg = pos_to_deg(old_logical_pos)
+        print(f"ID4 현재 Position : {old_current_pos}")
+        print(f"ID4 현재 논리각도 : {old_current_deg:.1f}°")
+    else:
+        print("ID4 현재 Position : 읽기실패")
+
+    print(f"ID4 온도 : {old_temp}°C")
+    print(f"ID5 현재 Position : {new_current_pos}")
+
+
+def move_single_6(deg):
+    deg = clamp(deg, 0, MAX_DEG)
+    target_pos = deg_to_pos(deg)
+
+    result, error = oldServo.WritePos(ID_6, target_pos, 0, OLD_SPEED)
+
+    print("\n===== M6 손목 이동 =====")
+    print(f"목표 각도 : {deg:.1f}°")
+    print(f"목표 Position : {target_pos}")
+    print(f"result : {result}")
+    print(f"error : {error}")
+
+    wait_old_servo_reached(ID_6, target_pos)
+
+    current_pos = read_old_position(ID_6)
+    temp = read_old_temp(ID_6)
+    current_deg = pos_to_deg(current_pos) if current_pos is not None else None
+
+    print(f"현재 Position : {current_pos}")
+    print(f"현재 각도 : {current_deg:.1f}°" if current_deg is not None else "현재 각도 : 읽기실패")
+    print(f"현재 온도 : {temp}°C")
+
+
+def move_single_7(deg):
+    deg = clamp(deg, 0, MAX_DEG)
+    target_pos = deg_to_pos(deg)
+
+    result, error = oldServo.WritePos(ID_7, target_pos, 0, OLD_SPEED)
+
+    print("\n===== M7 그리퍼 회전 =====")
+    print(f"목표 각도 : {deg:.1f}°")
+    print(f"목표 Position : {target_pos}")
+    print(f"result : {result}")
+    print(f"error : {error}")
+
+    wait_old_servo_reached(ID_7, target_pos)
+
+    current_pos = read_old_position(ID_7)
+    temp = read_old_temp(ID_7)
+    current_deg = pos_to_deg(current_pos) if current_pos is not None else None
+
+    print(f"현재 Position : {current_pos}")
+    print(f"현재 각도 : {current_deg:.1f}°" if current_deg is not None else "현재 각도 : 읽기실패")
+    print(f"현재 온도 : {temp}°C")
