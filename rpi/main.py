@@ -63,11 +63,13 @@ if __name__ == "__main__":
                     
                     # 수직 축 기준 평면 결정
                     if up_axis == 0:
-                        w_top, d_top, h_now = spec['h'], spec['w'], spec['d']
+                        w_top, d_top, h_now = spec['w'], spec['d'], spec['h']
                     elif up_axis == 1:
-                        w_top, d_top, h_now = spec['h'], spec['d'], spec['w']
+                        w_top, d_top, h_now = spec['w'], spec['d'], spec['h']
                     else:
                         w_top, d_top, h_now = spec['w'], spec['d'], spec['h']
+
+                    pick_coords[2] += 80.0
 
                     # 적재 위치 계산
                     new_item = Item(label, w_top, h_now, d_top, spec['weight'])
