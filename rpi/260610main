@@ -1,0 +1,175 @@
+"""
+main.py
+- ArUco 인식 → 패킷 생성 → receiver 프로세스로 전달
+- Z 보정은 receiver에서 처리 (main은 raw 좌표 전달)
+- 상자별 Z 오프셋 제거 (main에서 +70 하드코딩 제거)
+- 에러 케이스 명확히 분리
+"""
+ 
+from __future__ import annotations
+ 
+import logging
+import pickle
+import cv2
+from multiprocessing import Process, Queue
+ 
+from picamera2 import Picamera2
+ 
+from ArUco import live_aruco_detection
+from py3Dbp import Item, LiveBin
+from receiver import motor_control_receiver
+from visualizer import BinVisualizer
+ 
+log = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [MAIN] %(message)s",
+    datefmt="%H:%M:%S",
+)
+ 
+# ──────────────────────────────────────────────
+# 상자 데이터베이스
+# ──────────────────────────────────────────────
+BOX_DATA: dict[int, dict] = {
+    1: {"label": "A_1", "w": 140.0, "h":  50.0, "d": 100.0, "weight": 1.0},
+    2: {"label": "B_3", "w": 120.0, "h":  53.0, "d": 110.0, "weight": 1.0},
+    3: {"label": "B_8", "w": 150.0, "h": 100.0, "d": 100.0, "weight": 1.0},
+}
+ 
+ 
+# ──────────────────────────────────────────────
+# 카메라 초기화
+# ──────────────────────────────────────────────
+def _init_camera() -> Picamera2:
+    cam = Picamera2()
+    cam.configure(cam.create_video_configuration(
+        main={"size": (640, 480), "format": "BGR888"}
+    ))
+    cam.start()
+    log.info("카메라 초기화 완료")
+    return cam
+ 
+ 
+# ──────────────────────────────────────────────
+# 메인 루프
+# ──────────────────────────────────────────────
+def main() -> None:
+    # 캘리브레이션 로드
+    try:
+        with open("camera_calibration.pkl", "rb") as f:
+            calib = pickle.load(f)
+        log.info("캘리브레이션 로드 완료")
+    except FileNotFoundError:
+        log.error("camera_calibration.pkl 없음 → 종료")
+        return
+ 
+    cam        = _init_camera()
+    bin_system = LiveBin(200, 200, 200, max_weight=100)
+    queue: Queue = Queue(maxsize=5)
+ 
+    # receiver 프로세스 시작
+    p = Process(target=motor_control_receiver, args=(queue,), daemon=True)
+    p.start()
+    log.info("receiver 프로세스 시작")
+    log.info("준비 완료  |  y: 인식 시작  /  q: 종료")
+ 
+    try:
+        while True:
+            cmd = input("\n상자를 인식하시겠습니까? (y/q): ").strip().lower()
+ 
+            if cmd == "q":
+                break
+            if cmd != "y":
+                continue
+ 
+            # ArUco 인식
+            log.info("ArUco 인식 시작")
+            result = live_aruco_detection(calib, cam)
+ 
+            if not result:
+                log.warning("ArUco 인식 실패 → 재시도")
+                continue
+ 
+            marker_id, angle, pick_coords, up_axis = result
+            log.info("인식 성공  id=%d  angle=%.1f°  coords=%s",
+                     marker_id, angle, pick_coords)
+ 
+            if marker_id not in BOX_DATA:
+                log.warning("등록되지 않은 marker_id=%d → 건너뜀", marker_id)
+                continue
+ 
+            spec  = BOX_DATA[marker_id]
+            label = spec["label"]
+ 
+            # up_axis에 따른 치수 결정
+            # 0: Z가 위 (기본), 1: X가 위, 2: Y가 위
+            if up_axis == 1:
+                w_top, d_top, h_now = spec["h"], spec["d"], spec["w"]
+            elif up_axis == 2:
+                w_top, d_top, h_now = spec["w"], spec["h"], spec["d"]
+            else:
+                w_top, d_top, h_now = spec["w"], spec["d"], spec["h"]
+ 
+            # pick_coords는 raw 그대로 전달 (Z 보정은 receiver에서)
+            pick_raw = [float(pick_coords[0]),
+                        float(pick_coords[1]),
+                        float(pick_coords[2])]
+ 
+            log.info("Pick raw coords: %s  h_now=%.1f", pick_raw, h_now)
+ 
+            # 적재 위치 계산
+            new_item = Item(label, w_top, h_now, d_top, spec["weight"])
+            success, is_rotated = bin_system.place_item(new_item)
+ 
+            if not success:
+                log.warning("%s 적재 공간 부족 → 건너뜀", label)
+                continue
+ 
+            load_coords = [
+                float(new_item.x + new_item.w / 2),
+                float(new_item.y + new_item.d / 2),
+                float(new_item.z + new_item.h),
+            ]
+ 
+            log.info("Load coords: %s  rotated=%s", load_coords, is_rotated)
+ 
+            # 시각화
+            BinVisualizer(bin_system).update_plot()
+            bin_system.print_state()
+ 
+            # 패킷 전송
+            packet = {
+                "label":      label,
+                "pick":       pick_raw,      # raw Z (보정 없음)
+                "load":       load_coords,
+                "angle":      float(angle),
+                "is_rotated": is_rotated,
+                "success":    success,
+            }
+ 
+            if not queue.full():
+                queue.put(packet)
+                log.info("Queue 전송 완료  label=%s", label)
+            else:
+                log.warning("Queue 포화 → 전송 실패")
+ 
+    finally:
+        log.info("종료 처리")
+        try:
+            cam.stop()
+            log.info("카메라 종료")
+        except Exception as e:
+            log.error("카메라 종료 오류: %s", e)
+ 
+        try:
+            p.terminate()
+            log.info("receiver 프로세스 종료")
+        except Exception as e:
+            log.error("receiver 종료 오류: %s", e)
+ 
+        cv2.destroyAllWindows()
+        log.info("시스템 종료")
+ 
+ 
+if __name__ == "__main__":
+    main()
