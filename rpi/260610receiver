@@ -1,0 +1,183 @@
+"""
+receiver.py
+- 큐 폴링 → q.get(timeout) 으로 busy-wait 제거
+- Z 보정을 상자별로 분리 (모든 상자 동일 70mm 제거)
+- IK FK 오차 경고 추가
+- 시퀀스 각 단계 로그 강화
+"""
+ 
+from __future__ import annotations
+ 
+import logging
+import numpy as np
+from multiprocessing import Queue
+ 
+from robot_ik import RobotIKController
+from Motor import (
+    init_motor,
+    close_motor,
+    gripper_close,
+    pose_1_base,
+    pose_2_pick_ready,
+    pose_3_go_to_place,
+    act_pick,
+    pose_5_wrist_rotate,
+    pose_6_rotation,
+    act_place,
+    align_base,
+)
+ 
+log = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [RECEIVER] %(message)s",
+    datefmt="%H:%M:%S",
+)
+ 
+QUEUE_TIMEOUT = 0.5
+BIN_HEIGHT_MM = 200.0
+ 
+# 상자별 Z 보정값 (컨베이어 바닥 기준 흡착 목표 높이 오프셋)
+# B_3 Pick 실패 시 B_3 값을 조금씩 조정하세요 (±5mm 단위 권장)
+Z_OFFSET_BY_LABEL: dict[str, float] = {
+    "A_1": 70.0,
+    "B_3": 63.0,
+    "B_8": 50.0,
+}
+Z_OFFSET_DEFAULT = 70.0
+ 
+ 
+def _make_ik_dict(degrees: list[float]) -> dict[str, float]:
+    return {
+        "deg1":  degrees[0],
+        "deg23": degrees[1],
+        "deg45": degrees[2],
+        "deg6":  degrees[3],
+        "deg7":  degrees[4] if len(degrees) > 4 else 0.0,
+    }
+ 
+ 
+def _run_sequence(packet: dict, ik: RobotIKController, first_cycle: bool) -> bool:
+    label       = packet["label"]
+    px, py, pz  = packet["pick"]
+    lx, ly, lz  = packet["load"]
+    angle       = packet["angle"]
+ 
+    log.info("=" * 50)
+    log.info("수신: label=%s  angle=%.1f°", label, angle)
+    log.info("Pick raw: [%.1f, %.1f, %.1f]", px, py, pz)
+    log.info("Load raw: [%.1f, %.1f, %.1f]", lx, ly, lz)
+ 
+    # Z 보정 (상자별)
+    z_offset     = Z_OFFSET_BY_LABEL.get(label, Z_OFFSET_DEFAULT)
+    pz_corrected = pz + z_offset
+    log.info("Z 보정: %.1f + %.1f = %.1f mm", pz, z_offset, pz_corrected)
+ 
+    # Pick IK 계산
+    pick_m       = [px / 1000.0, py / 1000.0, pz_corrected / 1000.0]
+    pick_joints  = ik.calculate_ik(pick_m)
+    pick_fk      = ik.verify_fk(pick_joints)
+    pick_degrees = np.degrees(pick_joints).tolist()
+    pick_ik      = _make_ik_dict(pick_degrees)
+ 
+    log.info("[Pick IK] 목표(m)  : %s", [f"{v:.4f}" for v in pick_m])
+    log.info("[Pick IK] FK 검증  : %s", [f"{v:.4f}" for v in pick_fk])
+    log.info("[Pick IK] 관절각   : %s", [f"{v:.1f}"  for v in pick_degrees])
+    log.info("[Pick IK] dict     : %s", pick_ik)
+ 
+    # FK 오차가 크면 IK 수렴 불안정 경고
+    fk_err = sum((a - b) ** 2 for a, b in zip(pick_m, pick_fk)) ** 0.5
+    if fk_err > 0.01:
+        log.warning("[Pick IK] FK 오차 %.4f m → IK 수렴 불안정 가능성", fk_err)
+ 
+    # 시퀀스 실행
+    if first_cycle:
+        log.info("[STEP 1] BASE")
+        pose_1_base()
+ 
+    log.info("[STEP 2] PICK READY")
+    pose_2_pick_ready()
+ 
+    log.info("[STEP 3] GO TO PLACE")
+    pose_3_go_to_place()
+ 
+    log.info("[ALIGN] angle=%.1f°", angle)
+    align_base(angle)
+ 
+    log.info("[STEP 4] ACT PICK  label=%s", label)
+    act_pick(box_type=label, ik_dict=pick_ik)
+    log.info("[STEP 4] 완료 / 그리퍼 ON")
+ 
+    log.info("[STEP 5] WRIST ROTATE")
+    pose_5_wrist_rotate()
+ 
+    log.info("[STEP 6] ROTATION")
+    pose_6_rotation()
+ 
+    # Place IK 계산
+    raw_place_z = max(0.0, lz - z_offset)
+    place_z     = max(0.0, min(BIN_HEIGHT_MM, BIN_HEIGHT_MM - raw_place_z))
+    log.info("[Place Z]  lz=%.1f  offset=%.1f  raw=%.1f  final=%.1f",
+             lz, z_offset, raw_place_z, place_z)
+ 
+    try:
+        load_joints = ik.calculate_place_ik_after_base_rotation(
+            load_position_mm=[lx, ly, place_z],
+            base_deg=90,
+        )
+    except Exception as e:
+        log.error("[Place IK] 계산 실패: %s", e)
+        return False
+ 
+    load_fk      = ik.verify_fk(load_joints)
+    load_degrees = np.degrees(load_joints).tolist()
+    load_ik      = _make_ik_dict(load_degrees)
+ 
+    log.info("[Place IK] FK 검증 : %s", [f"{v:.4f}" for v in load_fk])
+    log.info("[Place IK] dict    : %s", load_ik)
+ 
+    log.info("[STEP 7] ACT PLACE")
+    act_place(ik_dict=load_ik)
+    log.info("[STEP 7] 완료 / 그리퍼 OFF")
+ 
+    log.info("[RETURN] PICK READY 복귀")
+    pose_2_pick_ready()
+ 
+    log.info("===== 시퀀스 완료: %s =====", label)
+    return True
+ 
+ 
+def motor_control_receiver(q: Queue) -> None:
+    if not init_motor():
+        log.error("모터 초기화 실패 → 종료")
+        return
+ 
+    ik          = RobotIKController()
+    first_cycle = True
+ 
+    log.info("수신 모듈 시작 ─ 대기 중...")
+ 
+    try:
+        while True:
+            try:
+                packet = q.get(timeout=QUEUE_TIMEOUT)
+            except Exception:
+                continue
+ 
+            if not packet.get("success", False):
+                log.warning("적재 불가 패킷 → 건너뜀")
+                continue
+ 
+            try:
+                ok = _run_sequence(packet, ik, first_cycle)
+                if ok:
+                    first_cycle = False
+                else:
+                    log.error("시퀀스 실패: %s", packet.get("label"))
+            except Exception as e:
+                log.error("시퀀스 예외: %s", e, exc_info=True)
+ 
+    finally:
+        log.info("종료 처리")
+        gripper_close()
+        close_motor()
