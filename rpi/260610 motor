@@ -1,0 +1,309 @@
+"""
+Motor.py
+- 모든 이동은 smooth_move로 보간
+- 도달 확인(wait) 포함
+- 기준각 테이블 중심 설계
+- 디버그 로그 강화
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from typing import Optional
+
+from scservo_sdk import COMM_SUCCESS, PortHandler, scscl, sms_sts
+from gripper import ESP32Emulator
+
+log = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [MOTOR] %(message)s",
+    datefmt="%H:%M:%S",
+)
+
+# ──────────────────────────────────────────────
+# 하드웨어 상수
+# ──────────────────────────────────────────────
+PORT     = "/dev/ttyACM0"
+BAUD     = 1_000_000
+MAX_POS  = 1023
+MAX_DEG  = 220.0
+
+ID_1, ID_2, ID_3 = 1, 2, 3
+ID_4, ID_5, ID_6 = 4, 5, 6
+ID_7              = 7
+
+OLD_SPEED = 500
+OLD_TIME  = 2000
+NEW_SPEED = 181
+NEW_ACC   = 1
+
+SMOOTH_STEPS = 30
+SMOOTH_DELAY = 0.03
+
+ID3_MIN_POS    = 540
+REACH_TIMEOUT  = 8.0
+REACH_TOLERANE = 0.10
+
+# ──────────────────────────────────────────────
+# 기준각 테이블 (측정값)
+# ──────────────────────────────────────────────
+PICK_TABLE: dict[str, dict] = {
+    "A_1": {"deg1": 0, "deg23": 20, "deg45": 10, "deg6": 110, "deg7": 0},
+    "B_3": {"deg1": 0, "deg23": 65, "deg45": 20, "deg6": 110, "deg7": 0},
+    "B_8": {"deg1": 0, "deg23": 60, "deg45": 40, "deg6": 110, "deg7": 0},
+}
+
+# IK 허용 오프셋 (기준각 ± 절대값, deg)
+# ±3%가 너무 좁아서 B_3 흡착 실패 → 넉넉하게 설정 후 테스트하며 좁혀가세요
+IK_OFFSET: dict[str, float] = {
+    "deg1":  5.0,
+    "deg23": 8.0,
+    "deg45": 6.0,
+    "deg6":  8.0,
+    "deg7":  5.0,
+}
+
+# ──────────────────────────────────────────────
+# 미리 정의된 포즈
+# ──────────────────────────────────────────────
+POSE_BASE        = {"deg1": 0,  "deg23": 20, "deg45": 10, "deg6": 220, "deg7": 0}
+POSE_PICK_READY  = {"deg1": 0,  "deg23": 0,  "deg45": 0,  "deg6": 110, "deg7": 0}
+POSE_GO_TO_PLACE = {"deg1": 0,  "deg23": 45, "deg45": 20, "deg6": 100, "deg7": 0}
+POSE_WRIST_ROT   = {"deg1": 0,  "deg23": 20, "deg45": 10, "deg6": 90,  "deg7": 0}
+POSE_ROTATION    = {"deg1": 90, "deg23": 20, "deg45": 10, "deg6": 110, "deg7": 0}
+
+# ──────────────────────────────────────────────
+# 하드웨어 핸들
+# ──────────────────────────────────────────────
+_port    = PortHandler(PORT)
+_old     = scscl(_port)
+_new     = sms_sts(_port)
+_gripper = ESP32Emulator(pump_channel=0, valve_channel=1)
+
+_state: dict[str, float] = {
+    "deg1": 0.0, "deg23": 20.0, "deg45": 10.0,
+    "deg6": 220.0, "deg7": 0.0,
+}
+
+
+# ──────────────────────────────────────────────
+# 유틸
+# ──────────────────────────────────────────────
+def _clamp(v: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, v))
+
+def _deg_to_pos(deg: float) -> int:
+    return int(_clamp(deg, 0, MAX_DEG) * MAX_POS / MAX_DEG)
+
+def _pos_to_deg(pos: int) -> float:
+    return _clamp(pos, 0, MAX_POS) * MAX_DEG / MAX_POS
+
+def _rev(pos: int) -> int:
+    return MAX_POS - _clamp(pos, 0, MAX_POS)
+
+def _read_pos(sid: int) -> Optional[int]:
+    pos, result, _ = _old.ReadPos(sid)
+    return pos if result == COMM_SUCCESS else None
+
+def _tolerance(tgt: int) -> int:
+    return max(20, int(tgt * REACH_TOLERANE))
+
+
+# ──────────────────────────────────────────────
+# 도달 대기
+# ──────────────────────────────────────────────
+def _wait(targets: dict[int, int], timeout: float = REACH_TIMEOUT) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        ok = True
+        for sid, tgt in targets.items():
+            cur = _read_pos(sid)
+            if cur is None or abs(cur - tgt) > _tolerance(tgt):
+                ok = False
+                break
+        if ok:
+            return True
+        time.sleep(0.05)
+    log.warning("도달 타임아웃  targets=%s", targets)
+    return False
+
+
+# ──────────────────────────────────────────────
+# 저수준 이동
+# ──────────────────────────────────────────────
+def _write_pose(deg1: float, deg23: float, deg45: float,
+                deg6: float, deg7: float) -> None:
+    p1  = _deg_to_pos(deg1)
+    p23 = _deg_to_pos(deg23)
+    p3  = max(_rev(p23), ID3_MIN_POS)
+    p45 = _deg_to_pos(deg45)
+    p4  = _rev(p45)
+    p6  = _deg_to_pos(deg6)
+    p7  = _deg_to_pos(deg7)
+
+    _old.WritePos(ID_1, p1,  0,        OLD_SPEED)
+    _old.WritePos(ID_2, p23, 0,        OLD_SPEED)
+    _old.WritePos(ID_3, p3,  0,        OLD_SPEED)
+    _old.WritePos(ID_4, p4,  OLD_TIME, OLD_SPEED)
+    _new.WritePosEx(ID_5, p45, NEW_SPEED, NEW_ACC)
+    _old.WritePos(ID_6, p6,  0,        OLD_SPEED)
+    _old.WritePos(ID_7, p7,  0,        OLD_SPEED)
+
+
+# ──────────────────────────────────────────────
+# smooth 이동
+# ──────────────────────────────────────────────
+def smooth_move(target: dict[str, float], steps: int = SMOOTH_STEPS) -> bool:
+    start = dict(_state)
+
+    log.info("▶ smooth_move")
+    log.info("  현재: %s", {k: f"{v:.1f}" for k, v in start.items()})
+    log.info("  목표: %s", {k: f"{v:.1f}" for k, v in target.items()})
+
+    for i in range(1, steps + 1):
+        r = i / steps
+        interp = {k: start[k] + (target[k] - start[k]) * r for k in target}
+        _write_pose(**interp)
+        time.sleep(SMOOTH_DELAY)
+
+    _state.update(target)
+
+    reached = _wait({
+        ID_1: _deg_to_pos(target["deg1"]),
+        ID_2: _deg_to_pos(target["deg23"]),
+        ID_4: _rev(_deg_to_pos(target["deg45"])),
+        ID_6: _deg_to_pos(target["deg6"]),
+        ID_7: _deg_to_pos(target["deg7"]),
+    })
+
+    log.info("  %s", "✓ 도달 확인" if reached else "✗ 도달 타임아웃")
+    return reached
+
+
+# ──────────────────────────────────────────────
+# IK 보정 적용
+# ──────────────────────────────────────────────
+def apply_ik_offset(box_type: str, ik_dict: dict[str, float]) -> dict[str, float]:
+    if box_type not in PICK_TABLE:
+        log.warning("알 수 없는 상자 타입 → A_1 기준 사용")
+        box_type = "A_1"
+
+    base   = PICK_TABLE[box_type]
+    result = {}
+
+    log.info("===== IK 보정 적용 (%s) =====", box_type)
+    for key in ("deg1", "deg23", "deg45", "deg6", "deg7"):
+        offset  = IK_OFFSET.get(key, 5.0)
+        lo      = _clamp(base[key] - offset, 0, MAX_DEG)
+        hi      = _clamp(base[key] + offset, 0, MAX_DEG)
+        ik_val  = ik_dict.get(key, base[key])
+        clamped = _clamp(ik_val, lo, hi)
+        log.info("  %s | 기준=%.1f° ±%.1f° | IK=%.1f° | 최종=%.1f°",
+                 key, base[key], offset, ik_val, clamped)
+        result[key] = clamped
+
+    return result
+
+
+# ──────────────────────────────────────────────
+# 초기화 / 종료
+# ──────────────────────────────────────────────
+def init_motor() -> bool:
+    if not _port.openPort():
+        log.error("포트 열기 실패: %s", PORT)
+        return False
+    if not _port.setBaudRate(BAUD):
+        log.error("Baudrate 설정 실패")
+        return False
+    log.info("모터 연결 성공  port=%s  baud=%d", PORT, BAUD)
+    return True
+
+def close_motor() -> None:
+    _port.closePort()
+    log.info("포트 종료")
+
+
+# ──────────────────────────────────────────────
+# 그리퍼
+# ──────────────────────────────────────────────
+def gripper_on() -> None:
+    log.info("[그리퍼] 흡착 ON")
+    _gripper.control(True)
+    time.sleep(2.0)
+
+def gripper_off() -> None:
+    log.info("[그리퍼] 흡착 OFF")
+    _gripper.control(False)
+    time.sleep(2.0)
+
+def gripper_close() -> None:
+    log.info("[그리퍼] 종료")
+    _gripper.control(False)
+    time.sleep(0.5)
+    _gripper.release_hardware()
+
+
+# ──────────────────────────────────────────────
+# 포즈 함수
+# ──────────────────────────────────────────────
+def pose_1_base() -> None:
+    log.info("[POSE 1] BASE")
+    smooth_move(POSE_BASE)
+
+def pose_2_pick_ready() -> None:
+    log.info("[POSE 2] PICK READY")
+    smooth_move(POSE_PICK_READY)
+
+def pose_3_go_to_place() -> None:
+    log.info("[POSE 3] GO TO PLACE")
+    smooth_move(POSE_GO_TO_PLACE)
+    time.sleep(0.3)
+
+def pose_5_wrist_rotate() -> None:
+    log.info("[POSE 5] WRIST ROTATE")
+    smooth_move(POSE_WRIST_ROT)
+
+def pose_6_rotation() -> None:
+    log.info("[POSE 6] ROTATION")
+    smooth_move(POSE_ROTATION)
+
+
+# ──────────────────────────────────────────────
+# 핵심 동작
+# ──────────────────────────────────────────────
+def act_pick(box_type: str = "A_1", ik_dict: Optional[dict] = None) -> None:
+    log.info("[ACT PICK] box_type=%s  ik=%s", box_type, "있음" if ik_dict else "없음")
+
+    if box_type not in PICK_TABLE:
+        log.warning("알 수 없는 상자 타입 → A_1 기준 사용")
+        box_type = "A_1"
+
+    target = apply_ik_offset(box_type, ik_dict) if ik_dict else dict(PICK_TABLE[box_type])
+
+    log.info("[ACT PICK] 최종 목표각: %s", target)
+    smooth_move(target)
+    gripper_on()
+
+
+def act_place(ik_dict: dict[str, float]) -> None:
+    log.info("[ACT PLACE] ik=%s", ik_dict)
+    target = dict(ik_dict)
+    target["deg1"] = _state["deg1"]   # Base는 rotation 후 현재값 유지
+    log.info("[ACT PLACE] 최종 목표각: %s", target)
+    smooth_move(target)
+    gripper_off()
+
+
+def align_base(angle: float, tolerance: float = 15.0) -> None:
+    current = _state["deg1"]
+    target  = _clamp(angle % 180, current - tolerance, current + tolerance)
+    target  = _clamp(target, 0, 180)
+    log.info("[ALIGN] 마커=%.1f°  현재=%.1f°  목표=%.1f°", angle, current, target)
+    smooth_move({**_state, "deg1": target})
+    log.info("[ALIGN] 완료")
+
+
+def get_current_base_angle() -> float:
+    return _state["deg1"]
