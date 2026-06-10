@@ -1,0 +1,756 @@
+# live_bin_raspberry.py
+# UnityLiveBinTester.cs -> Raspberry Pi Python version
+# 목적: ArUco/카메라 인식 후 라즈베리파이 Python에서 박스 적재 좌표 계산
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from math import sqrt
+from typing import List, Optional, Tuple, Dict
+
+
+Vector3 = Tuple[float, float, float]
+Vector2 = Tuple[float, float]
+
+
+@dataclass
+class BoxRotationRule:
+    box_label: str
+    similarity_threshold: float = 0.95
+    allow_rotation: bool = True
+    force_no_rotation: bool = False
+    force_rotation: bool = False
+
+
+@dataclass
+class Item:
+    name: str
+    original_w: float
+    original_h: float
+    original_d: float
+
+    w: float = field(init=False)
+    h: float = field(init=False)
+    d: float = field(init=False)
+
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+
+    rotated: bool = False
+    width_depth_similarity: float = 1.0
+    applied_similarity_threshold: float = 0.95
+    rotation_decision_reason: str = "INIT"
+
+    def __post_init__(self) -> None:
+        self.w = self.original_w
+        self.h = self.original_h
+        self.d = self.original_d
+
+    def set_position(self, x: float, y: float, z: float) -> None:
+        self.x = x
+        self.y = y
+        self.z = z
+
+    def clone(self) -> "Item":
+        cloned = Item(self.name, self.original_w, self.original_h, self.original_d)
+        cloned.w = self.w
+        cloned.h = self.h
+        cloned.d = self.d
+        cloned.x = self.x
+        cloned.y = self.y
+        cloned.z = self.z
+        cloned.rotated = self.rotated
+        cloned.width_depth_similarity = self.width_depth_similarity
+        cloned.applied_similarity_threshold = self.applied_similarity_threshold
+        cloned.rotation_decision_reason = self.rotation_decision_reason
+        return cloned
+
+
+class CoordinateConverter:
+    """
+    Unity의 ConvertPythonLoadCoords()를 라즈베리파이용으로 단순화한 변환기.
+
+    기본값은 알고리즘 좌표(mm)를 그대로 반환합니다.
+    로봇 좌표계가 다르면 아래 axis/sign/origin을 바꿔서 맞추면 됩니다.
+
+    알고리즘 좌표:
+      x = bin 가로 방향 mm
+      y = bin 깊이 방향 mm
+      z = bin 높이 방향 mm
+
+    반환값:
+      로봇/IK에 넘길 적재 좌표 mm
+    """
+
+    def __init__(
+        self,
+        origin_mm: Vector3 = (0.0, 0.0, 0.0),
+        sign: Vector3 = (1.0, 1.0, 1.0),
+        axis_order: Tuple[int, int, int] = (0, 1, 2),
+    ) -> None:
+        self.origin_mm = origin_mm
+        self.sign = sign
+        self.axis_order = axis_order
+
+    def convert_python_load_coords(self, x: float, y: float, z: float) -> Vector3:
+        src = (x, y, z)
+        return (
+            self.origin_mm[0] + self.sign[0] * src[self.axis_order[0]],
+            self.origin_mm[1] + self.sign[1] * src[self.axis_order[1]],
+            self.origin_mm[2] + self.sign[2] * src[self.axis_order[2]],
+        )
+
+
+class LiveBin:
+    def __init__(
+        self,
+        W: float,
+        H: float,
+        D: float,
+        lower_layer_first: bool = True,
+        restrict_upper_layer_to_bottom_footprint: bool = True,
+        enable_look_ahead: bool = True,
+        upper_layer_footprint_margin: float = 20.0,
+        lower_layer_penalty_weight: float = 100000.0,
+        height_spread_weight: float = 3000.0,
+        center_balance_weight: float = 20.0,
+        edge_fill_weight: float = 1.0,
+        rectangle_footprint_weight: float = 50.0,
+        future_box_fit_penalty_weight: float = 50000.0,
+        future_box_fit_bonus_weight: float = 5000.0,
+        outer_fill_weight: float = 500.0,
+    ) -> None:
+        self.W = W
+        self.H = H
+        self.D = D
+
+        self.lower_layer_first = lower_layer_first
+        self.restrict_upper_layer_to_bottom_footprint = restrict_upper_layer_to_bottom_footprint
+        self.enable_look_ahead = enable_look_ahead
+
+        self.upper_layer_footprint_margin = upper_layer_footprint_margin
+        self.lower_layer_penalty_weight = lower_layer_penalty_weight
+        self.height_spread_weight = height_spread_weight
+        self.center_balance_weight = center_balance_weight
+        self.edge_fill_weight = edge_fill_weight
+        self.rectangle_footprint_weight = rectangle_footprint_weight
+        self.future_box_fit_penalty_weight = future_box_fit_penalty_weight
+        self.future_box_fit_bonus_weight = future_box_fit_bonus_weight
+        self.outer_fill_weight = outer_fill_weight
+
+        self.placed_items: List[Item] = []
+        self.extreme_points: List[Vector3] = [(0.0, 0.0, 0.0)]
+
+    def place_item(self, item: Item, rule: Optional[BoxRotationRule]) -> bool:
+        similarity = self.calculate_width_depth_similarity(item.original_w, item.original_d)
+        should_rotate = self.decide_rotation(item, rule, similarity)
+        candidate_item = self.create_candidate_by_rotation_rule(item, should_rotate, similarity, rule)
+
+        best_point: Vector3 = (0.0, 0.0, 0.0)
+        best_score = float("inf")
+        found = False
+
+        for point in self.extreme_points:
+            x, y, z = point
+
+            if not self.fits(candidate_item, x, y, z):
+                continue
+            if self.check_collision(candidate_item, x, y, z):
+                continue
+            if not self.check_upper_layer_footprint(candidate_item, x, y, z):
+                continue
+
+            score = self.calculate_total_score(candidate_item, x, y, z)
+            if score < best_score:
+                best_score = score
+                best_point = point
+                found = True
+
+        if not found:
+            return False
+
+        item.w = candidate_item.w
+        item.h = candidate_item.h
+        item.d = candidate_item.d
+        item.rotated = candidate_item.rotated
+        item.width_depth_similarity = candidate_item.width_depth_similarity
+        item.applied_similarity_threshold = candidate_item.applied_similarity_threshold
+        item.rotation_decision_reason = candidate_item.rotation_decision_reason
+        item.set_position(*best_point)
+
+        self.placed_items.append(item)
+        self.update_extreme_points(item)
+        return True
+
+    def calculate_total_score(self, item: Item, x: float, y: float, z: float) -> float:
+        base_score = self.calculate_layer_first_balanced_score(item, x, y, z)
+        outer_score = self.calculate_outer_fill_score(item, x, y) * self.outer_fill_weight
+        look_ahead_score = self.calculate_look_ahead_score(item, x, y, z) if self.enable_look_ahead else 0.0
+        return base_score + outer_score + look_ahead_score
+
+    def calculate_outer_fill_score(self, item: Item, x: float, y: float) -> float:
+        left_distance = x
+        right_distance = self.W - (x + item.w)
+        bottom_distance = y
+        top_distance = self.D - (y + item.d)
+
+        nearest_edge_distance = min(left_distance, right_distance, bottom_distance, top_distance)
+
+        corner_distance_a = sqrt(x * x + y * y)
+        corner_distance_b = sqrt(right_distance * right_distance + y * y)
+        corner_distance_c = sqrt(x * x + top_distance * top_distance)
+        corner_distance_d = sqrt(right_distance * right_distance + top_distance * top_distance)
+        nearest_corner_distance = min(corner_distance_a, corner_distance_b, corner_distance_c, corner_distance_d)
+
+        return nearest_edge_distance + nearest_corner_distance * 0.25
+
+    def calculate_look_ahead_score(self, current_item: Item, x: float, y: float, z: float) -> float:
+        simulated_items = self.clone_placed_items()
+        simulated_current = current_item.clone()
+        simulated_current.set_position(x, y, z)
+        simulated_items.append(simulated_current)
+
+        simulated_extreme_points = self.build_extreme_points_from_items(simulated_items)
+
+        future_items = [
+            Item("A1_LOOKAHEAD", 140.0, 50.0, 100.0),
+            Item("B3_LOOKAHEAD", 120.0, 53.0, 110.0),
+            Item("B8_LOOKAHEAD", 150.0, 100.0, 100.0),
+        ]
+
+        fit_count = 0
+        fail_count = 0
+        future_score_sum = 0.0
+
+        for future_item in future_items:
+            can_fit, best_future_score = self.can_place_future_item(
+                future_item, simulated_items, simulated_extreme_points
+            )
+            if can_fit:
+                fit_count += 1
+                future_score_sum += best_future_score
+            else:
+                fail_count += 1
+
+        return (
+            fail_count * self.future_box_fit_penalty_weight
+            - fit_count * self.future_box_fit_bonus_weight
+            + future_score_sum * 0.05
+        )
+
+    def can_place_future_item(
+        self,
+        future_item: Item,
+        simulated_items: List[Item],
+        simulated_extreme_points: List[Vector3],
+    ) -> Tuple[bool, float]:
+        best_future_score = float("inf")
+        found = False
+
+        candidates = [
+            Item(future_item.name, future_item.original_w, future_item.original_h, future_item.original_d),
+            Item(future_item.name, future_item.original_d, future_item.original_h, future_item.original_w),
+        ]
+        candidates[1].rotated = True
+
+        for candidate in candidates:
+            for point in simulated_extreme_points:
+                x, y, z = point
+                if not self.fits(candidate, x, y, z):
+                    continue
+                if self.check_collision_with_list(candidate, x, y, z, simulated_items):
+                    continue
+                if not self.check_upper_layer_footprint_with_list(candidate, x, y, z, simulated_items):
+                    continue
+
+                score = self.calculate_simple_future_score(candidate, x, y, z, simulated_items)
+                if score < best_future_score:
+                    best_future_score = score
+                    found = True
+
+        return found, best_future_score
+
+    def calculate_simple_future_score(
+        self, item: Item, x: float, y: float, z: float, simulated_items: List[Item]
+    ) -> float:
+        top_z = z + item.h
+        rectangle_penalty = self.calculate_rectangle_footprint_penalty_with_list(item, x, y, simulated_items)
+        outer_score = self.calculate_outer_fill_score(item, x, y)
+        return top_z * 10000.0 + rectangle_penalty * self.rectangle_footprint_weight + outer_score * self.outer_fill_weight
+
+    def clone_placed_items(self) -> List[Item]:
+        return [item.clone() for item in self.placed_items]
+
+    def build_extreme_points_from_items(self, items: List[Item]) -> List[Vector3]:
+        points: List[Vector3] = [(0.0, 0.0, 0.0)]
+        for item in items:
+            new_points = [
+                (item.x + item.w, item.y, item.z),
+                (item.x, item.y + item.d, item.z),
+                (item.x, item.y, item.z + item.h),
+            ]
+            for point in new_points:
+                if point[0] < self.W and point[1] < self.D and point[2] < self.H and point not in points:
+                    points.append(point)
+        return points
+
+    def check_collision_with_list(self, item: Item, x: float, y: float, z: float, item_list: List[Item]) -> bool:
+        for p in item_list:
+            separated = (
+                x + item.w <= p.x
+                or p.x + p.w <= x
+                or y + item.d <= p.y
+                or p.y + p.d <= y
+                or z + item.h <= p.z
+                or p.z + p.h <= z
+            )
+            if not separated:
+                return True
+        return False
+
+    def check_upper_layer_footprint_with_list(
+        self, item: Item, x: float, y: float, z: float, item_list: List[Item]
+    ) -> bool:
+        if not self.restrict_upper_layer_to_bottom_footprint:
+            return True
+        if z <= 0.001:
+            return True
+
+        footprint = self.get_bottom_layer_footprint_from_list(item_list)
+        if footprint is None:
+            return False
+
+        min_x, max_x, min_y, max_y = footprint
+        return (
+            x >= min_x - self.upper_layer_footprint_margin
+            and y >= min_y - self.upper_layer_footprint_margin
+            and x + item.w <= max_x + self.upper_layer_footprint_margin
+            and y + item.d <= max_y + self.upper_layer_footprint_margin
+        )
+
+    @staticmethod
+    def get_bottom_layer_footprint_from_list(item_list: List[Item]) -> Optional[Tuple[float, float, float, float]]:
+        min_x = float("inf")
+        max_x = -float("inf")
+        min_y = float("inf")
+        max_y = -float("inf")
+        found = False
+
+        for item in item_list:
+            if abs(item.z) > 0.001:
+                continue
+            found = True
+            min_x = min(min_x, item.x)
+            max_x = max(max_x, item.x + item.w)
+            min_y = min(min_y, item.y)
+            max_y = max(max_y, item.y + item.d)
+
+        if not found:
+            return None
+        return min_x, max_x, min_y, max_y
+
+    def calculate_rectangle_footprint_penalty_with_list(
+        self, item: Item, x: float, y: float, item_list: List[Item]
+    ) -> float:
+        min_x = x
+        max_x = x + item.w
+        min_y = y
+        max_y = y + item.d
+        total_footprint_area = item.w * item.d
+
+        for p in item_list:
+            min_x = min(min_x, p.x)
+            max_x = max(max_x, p.x + p.w)
+            min_y = min(min_y, p.y)
+            max_y = max(max_y, p.y + p.d)
+            total_footprint_area += p.w * p.d
+
+        bounding_area = (max_x - min_x) * (max_y - min_y)
+        return bounding_area - total_footprint_area
+
+    def check_upper_layer_footprint(self, item: Item, x: float, y: float, z: float) -> bool:
+        if not self.restrict_upper_layer_to_bottom_footprint:
+            return True
+        if z <= 0.001:
+            return True
+
+        footprint = self.get_bottom_layer_footprint()
+        if footprint is None:
+            return False
+
+        min_x, max_x, min_y, max_y = footprint
+        inside = (
+            x >= min_x - self.upper_layer_footprint_margin
+            and y >= min_y - self.upper_layer_footprint_margin
+            and x + item.w <= max_x + self.upper_layer_footprint_margin
+            and y + item.d <= max_y + self.upper_layer_footprint_margin
+        )
+
+        if not inside:
+            print(
+                f"[UPPER FOOTPRINT REJECTED] {item.name} | "
+                f"Candidate({x},{y},{z}) Size({item.w},{item.d}) | "
+                f"BottomFootprint X({min_x}~{max_x}) Y({min_y}~{max_y}) | "
+                f"Margin: {self.upper_layer_footprint_margin}"
+            )
+        return inside
+
+    def get_bottom_layer_footprint(self) -> Optional[Tuple[float, float, float, float]]:
+        return self.get_bottom_layer_footprint_from_list(self.placed_items)
+
+    @staticmethod
+    def calculate_width_depth_similarity(width: float, depth: float) -> float:
+        shorter = min(width, depth)
+        longer = max(width, depth)
+        if longer <= 0.0:
+            return 1.0
+        return shorter / longer
+
+    def decide_rotation(self, item: Item, rule: Optional[BoxRotationRule], similarity: float) -> bool:
+        if rule is None:
+            item.applied_similarity_threshold = 0.95
+            item.rotation_decision_reason = "NO_RULE_RATIO_DEFAULT"
+            return similarity < 0.95
+
+        item.applied_similarity_threshold = rule.similarity_threshold
+
+        if not rule.allow_rotation:
+            item.rotation_decision_reason = "ALLOW_ROTATION_FALSE"
+            return False
+        if rule.force_no_rotation:
+            item.rotation_decision_reason = "FORCE_NO_ROTATION"
+            return False
+        if rule.force_rotation:
+            item.rotation_decision_reason = "FORCE_ROTATION"
+            return True
+        if similarity < rule.similarity_threshold:
+            item.rotation_decision_reason = "SIMILARITY_BELOW_THRESHOLD_ROTATE"
+            return True
+
+        item.rotation_decision_reason = "SIMILARITY_ABOVE_THRESHOLD_NO_ROTATE"
+        return False
+
+    @staticmethod
+    def create_candidate_by_rotation_rule(
+        item: Item, should_rotate: bool, similarity: float, rule: Optional[BoxRotationRule]
+    ) -> Item:
+        threshold = rule.similarity_threshold if rule is not None else 0.95
+        reason = item.rotation_decision_reason
+
+        if should_rotate:
+            candidate = Item(item.name, item.original_d, item.original_h, item.original_w)
+            candidate.rotated = True
+        else:
+            candidate = Item(item.name, item.original_w, item.original_h, item.original_d)
+            candidate.rotated = False
+
+        candidate.width_depth_similarity = similarity
+        candidate.applied_similarity_threshold = threshold
+        candidate.rotation_decision_reason = reason
+        return candidate
+
+    def fits(self, item: Item, x: float, y: float, z: float) -> bool:
+        return x + item.w <= self.W and y + item.d <= self.D and z + item.h <= self.H
+
+    def check_collision(self, item: Item, x: float, y: float, z: float) -> bool:
+        return self.check_collision_with_list(item, x, y, z, self.placed_items)
+
+    def calculate_layer_first_balanced_score(self, item: Item, x: float, y: float, z: float) -> float:
+        layer_penalty = z * self.lower_layer_penalty_weight if self.lower_layer_first else 0.0
+        top_z = z + item.h
+        height_spread = self.calculate_height_spread_after_place(item, x, y, z)
+        center_after_place = self.calculate_center_after_place(item, x, y)
+        bin_center = (self.W * 0.5, self.D * 0.5)
+        center_distance = self.vector2_distance(center_after_place, bin_center)
+        edge_fill = x + y
+        rectangle_penalty = self.calculate_rectangle_footprint_penalty(item, x, y)
+
+        return (
+            layer_penalty
+            + top_z * 10000.0
+            + height_spread * self.height_spread_weight
+            + center_distance * self.center_balance_weight
+            + edge_fill * self.edge_fill_weight
+            + rectangle_penalty * self.rectangle_footprint_weight
+        )
+
+    def calculate_rectangle_footprint_penalty(self, item: Item, x: float, y: float) -> float:
+        return self.calculate_rectangle_footprint_penalty_with_list(item, x, y, self.placed_items)
+
+    def calculate_height_spread_after_place(self, item: Item, x: float, y: float, z: float) -> float:
+        min_top = z + item.h
+        max_top = z + item.h
+        for p in self.placed_items:
+            top = p.z + p.h
+            min_top = min(min_top, top)
+            max_top = max(max_top, top)
+        return max_top - min_top
+
+    def calculate_center_after_place(self, item: Item, x: float, y: float) -> Vector2:
+        total_area = item.w * item.d
+        weighted_x = (x + item.w * 0.5) * total_area
+        weighted_y = (y + item.d * 0.5) * total_area
+
+        for p in self.placed_items:
+            area = p.w * p.d
+            total_area += area
+            weighted_x += (p.x + p.w * 0.5) * area
+            weighted_y += (p.y + p.d * 0.5) * area
+
+        if total_area <= 0.0:
+            return 0.0, 0.0
+        return weighted_x / total_area, weighted_y / total_area
+
+    @staticmethod
+    def vector2_distance(a: Vector2, b: Vector2) -> float:
+        return sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
+
+    def update_extreme_points(self, item: Item) -> None:
+        new_points = [
+            (item.x + item.w, item.y, item.z),
+            (item.x, item.y + item.d, item.z),
+            (item.x, item.y, item.z + item.h),
+        ]
+
+        for p in new_points:
+            if p[0] < self.W and p[1] < self.D and p[2] < self.H and p not in self.extreme_points:
+                self.extreme_points.append(p)
+
+    def get_placed_items(self) -> List[Item]:
+        return self.placed_items
+
+    def print_state(self) -> None:
+        print("===== 현재 적재 상태 =====")
+        for item in self.placed_items:
+            print(
+                f"{item.name} 위치({item.x:.1f},{item.y:.1f},{item.z:.1f}) "
+                f"크기({item.w:.1f},{item.h:.1f},{item.d:.1f}) "
+                f"회전:{item.rotated} 유사도:{item.width_depth_similarity:.3f} "
+                f"기준:{item.applied_similarity_threshold:.3f} 판단:{item.rotation_decision_reason}"
+            )
+
+
+class RaspberryLiveBinTester:
+    def __init__(
+        self,
+        converter: Optional[CoordinateConverter] = None,
+        bin_width: float = 200.0,
+        bin_height: float = 200.0,
+        bin_depth: float = 300.0,
+        bin_offset_x: float = 0.0,
+        bin_offset_y: float = 0.0,
+        bin_offset_z: float = 0.0,
+        print_label_debug: bool = True,
+        print_position_debug: bool = True,
+    ) -> None:
+        self.converter = converter or CoordinateConverter()
+
+        self.bin_width = bin_width
+        self.bin_height = bin_height
+        self.bin_depth = bin_depth
+
+        self.bin_offset_x = bin_offset_x
+        self.bin_offset_y = bin_offset_y
+        self.bin_offset_z = bin_offset_z
+
+        self.print_label_debug = print_label_debug
+        self.print_position_debug = print_position_debug
+
+        self.box_rotation_rules: List[BoxRotationRule] = [
+            BoxRotationRule("A1", 0.80, True, True, False),
+            BoxRotationRule("B3", 0.95, True, False, False),
+            BoxRotationRule("B8", 0.95, True, False, False),
+        ]
+
+        self.current_item_rotated = False
+        self.current_place_rotation_angle = 0.0
+        self.last_target_label = ""
+        self.item_count = 0
+
+        self.bin = LiveBin(
+            bin_width,
+            bin_height,
+            bin_depth,
+            lower_layer_first=True,
+            restrict_upper_layer_to_bottom_footprint=True,
+            enable_look_ahead=True,
+            upper_layer_footprint_margin=20.0,
+            lower_layer_penalty_weight=100000.0,
+            height_spread_weight=3000.0,
+            center_balance_weight=20.0,
+            edge_fill_weight=1.0,
+            rectangle_footprint_weight=50.0,
+            future_box_fit_penalty_weight=50000.0,
+            future_box_fit_bonus_weight=5000.0,
+            outer_fill_weight=500.0,
+        )
+
+        print(
+            f"LIVE BIN INITIALIZED | Size: {bin_width} x {bin_height} x {bin_depth} | "
+            f"Offset: {bin_offset_x},{bin_offset_y},{bin_offset_z}"
+        )
+
+    def prepare_place_target_for_box(self, target_label: str) -> Optional[Dict[str, object]]:
+        """
+        Unity Transform 대신 라즈베리파이에서는 ArUco/인식 결과 label 문자열을 넣습니다.
+
+        return 예:
+        {
+            'success': True,
+            'label': 'A1',
+            'place_pos_mm': (70.0, 50.0, 0.0),
+            'rotated': False,
+            'rotation_angle_deg': 0.0,
+            'item': Item(...)
+        }
+        """
+        if not target_label:
+            print("적재 좌표 계산 실패: target_label 없음")
+            return None
+
+        self.last_target_label = target_label
+        label = self.get_box_label(target_label)
+        item = self.create_item_from_label(label)
+
+        if item is None:
+            print(f"알 수 없는 박스 종류: {label}")
+            return None
+
+        rule = self.get_rotation_rule(label)
+        item.name = f"{label}_BOX_{self.item_count}"
+        self.item_count += 1
+
+        success = self.bin.place_item(item, rule)
+        if not success:
+            print(f"[BIN PACKING FAILED] {item.name}")
+            return None
+
+        self.current_item_rotated = item.rotated
+        self.current_place_rotation_angle = 90.0 if item.rotated else 0.0
+        target_pos = self.get_place_target_position(item)
+
+        print(
+            f"BIN PACKING PLACE TARGET | {item.name} -> {target_pos} | "
+            f"Rotated: {self.current_item_rotated} | "
+            f"RotationAngle: {self.current_place_rotation_angle} | "
+            f"Similarity: {item.width_depth_similarity:.3f} | "
+            f"RuleThreshold: {item.applied_similarity_threshold:.3f} | "
+            f"Decision: {item.rotation_decision_reason}"
+        )
+
+        if self.print_position_debug:
+            self.print_position_debug_info(item, target_pos)
+
+        self.bin.print_state()
+
+        return {
+            "success": True,
+            "label": label,
+            "place_pos_mm": target_pos,
+            "rotated": self.current_item_rotated,
+            "rotation_angle_deg": self.current_place_rotation_angle,
+            "item": item,
+        }
+
+    def get_rotation_rule(self, label: str) -> Optional[BoxRotationRule]:
+        normalized_label = self.normalize_label(label)
+        for rule in self.box_rotation_rules:
+            if self.normalize_label(rule.box_label) == normalized_label:
+                return rule
+        return None
+
+    def print_position_debug_info(self, item: Item, target_pos: Vector3) -> None:
+        algorithm_center = self.converter.convert_python_load_coords(
+            self.bin_offset_x + item.x + item.w * 0.5,
+            self.bin_offset_y + item.y + item.d * 0.5,
+            self.bin_offset_z + item.z + item.h * 0.5,
+        )
+        algorithm_bottom_center = self.converter.convert_python_load_coords(
+            self.bin_offset_x + item.x + item.w * 0.5,
+            self.bin_offset_y + item.y + item.d * 0.5,
+            self.bin_offset_z + item.z,
+        )
+        print(
+            f"[PLACE DEBUG] ITEM={item.name} | "
+            f"AlgorithmCenter={algorithm_center} | "
+            f"AlgorithmBottomCenter={algorithm_bottom_center} | "
+            f"PlaceTarget={target_pos}"
+        )
+
+    def get_box_label(self, raw_label: str) -> str:
+        normalized = self.normalize_label(raw_label)
+
+        if self.print_label_debug:
+            print(f"[LABEL DEBUG] RawLabel={raw_label} | Normalized={normalized}")
+
+        if "A1" in normalized:
+            return "A1"
+        if "B3" in normalized:
+            return "B3"
+        if "B8" in normalized:
+            return "B8"
+        return "UNKNOWN"
+
+    @staticmethod
+    def normalize_label(label: str) -> str:
+        if not label:
+            return ""
+        return (
+            label.upper()
+            .replace(" ", "")
+            .replace("_", "")
+            .replace("-", "")
+            .replace(".", "")
+            .replace("BOX", "")
+        )
+
+    def create_item_from_label(self, label: str) -> Optional[Item]:
+        normalized = self.normalize_label(label)
+        if normalized == "A1":
+            return Item("A1", 140.0, 50.0, 100.0)
+        if normalized == "B3":
+            return Item("B3", 120.0, 53.0, 110.0)
+        if normalized == "B8":
+            return Item("B8", 150.0, 100.0, 100.0)
+        return None
+
+    def get_place_target_position(self, item: Item) -> Vector3:
+        return self.converter.convert_python_load_coords(
+            self.bin_offset_x + item.x + item.w / 2.0,
+            self.bin_offset_y + item.y + item.d / 2.0,
+            self.bin_offset_z + item.z,
+        )
+
+
+if __name__ == "__main__":
+    # 라즈베리파이에서 단독 테스트용
+    # 실제 main.py에서는 RaspberryLiveBinTester를 import해서 ArUco 라벨을 넣으면 됩니다.
+
+    # 예: 적재 시작점을 로봇 기준 좌표로 옮기고 싶으면 origin_mm 수정
+    converter = CoordinateConverter(origin_mm=(0.0, 0.0, 0.0))
+
+    tester = RaspberryLiveBinTester(
+        converter=converter,
+        bin_width=200.0,
+        bin_height=200.0,
+        bin_depth=300.0,
+        bin_offset_x=0.0,
+        bin_offset_y=0.0,
+        bin_offset_z=0.0,
+    )
+
+    # 인식된 박스 라벨이 들어온다고 가정
+    test_labels = ["A_1", "B3", "B8", "A1", "B_3"]
+
+    for label in test_labels:
+        result = tester.prepare_place_target_for_box(label)
+        if result is None:
+            continue
+
+        place_pos_mm = result["place_pos_mm"]
+        rotation_angle_deg = result["rotation_angle_deg"]
+
+        print(f"로봇으로 보낼 적재 좌표(mm): {place_pos_mm}")
+        print(f"박스 놓을 때 회전각(deg): {rotation_angle_deg}")
+        print("-" * 60)
