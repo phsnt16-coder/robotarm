@@ -1,0 +1,107 @@
+import math
+from ikpy.chain import Chain
+
+
+class RobotIKController:
+    URDF_PATH = "mybot.urdf"
+
+    ACTIVE_MASK = [True, True, True, True, True, False]
+
+    DEFAULT_ORIENTATION = [0, -1, 0]
+    ORIENTATION_MODE = "Y"
+
+    # 그리퍼 끝단 TCP 길이
+    # IK가 관절 원점을 기준으로 계산되므로
+    # 실제 흡착패드 끝단이 닿게 하기 위해 Z를 낮춤
+    GRIPPER_TCP_LENGTH_MM = 80.0
+
+    def __init__(self):
+        self.chain = Chain.from_urdf_file(
+            self.URDF_PATH,
+            active_links_mask=self.ACTIVE_MASK
+        )
+
+    def _calculate_ik_core(self, target_position_m):
+        initial_joint_positions = [0] * len(self.chain.links)
+
+        joints = self.chain.inverse_kinematics(
+            target_position=target_position_m,
+            target_orientation=self.DEFAULT_ORIENTATION,
+            orientation_mode=self.ORIENTATION_MODE,
+            initial_position=initial_joint_positions
+        )
+
+        return joints
+
+    def calculate_pick_ik(self, pick_position_mm):
+        """
+        4번 ACT_PICK 전용 IK.
+
+        목표:
+        - ArUco 중심에 접근
+        - 그리퍼 끝단 TCP 길이를 고려해 더 아래로 접근
+        """
+
+        x_mm, y_mm, z_mm = pick_position_mm
+
+        pick_z_mm = z_mm - self.GRIPPER_TCP_LENGTH_MM
+
+        if pick_z_mm < 0:
+            pick_z_mm = 0
+
+        target_position_m = [
+            x_mm / 1000.0,
+            y_mm / 1000.0,
+            pick_z_mm / 1000.0
+        ]
+
+        print("\n[IK] PICK IK 계산")
+        print(f"[IK] 원본 Pick 좌표 mm : [{x_mm:.1f}, {y_mm:.1f}, {z_mm:.1f}]")
+        print(f"[IK] Gripper TCP 길이  : -{self.GRIPPER_TCP_LENGTH_MM:.1f} mm")
+        print(f"[IK] IK Pick 좌표 mm  : [{x_mm:.1f}, {y_mm:.1f}, {pick_z_mm:.1f}]")
+        print(f"[IK] IK Pick 좌표 m   : {target_position_m}")
+
+        return self._calculate_ik_core(target_position_m)
+
+    def calculate_place_ik(self, load_position_mm, base_deg=90):
+        """
+        7번 ACT_PLACE 전용 IK.
+
+        목표:
+        - 적재 알고리즘의 Load 좌표로 접근
+        - 6번 Base 회전 이후 좌표계 기준으로 변환
+        """
+
+        x_mm, y_mm, z_mm = load_position_mm
+
+        theta = math.radians(-base_deg)
+
+        place_x_mm = (
+            x_mm * math.cos(theta)
+            + y_mm * math.sin(theta)
+        )
+
+        place_y_mm = (
+            -x_mm * math.sin(theta)
+            + y_mm * math.cos(theta)
+        )
+
+        place_z_mm = z_mm
+
+        target_position_m = [
+            place_x_mm / 1000.0,
+            place_y_mm / 1000.0,
+            place_z_mm / 1000.0
+        ]
+
+        print("\n[IK] PLACE IK 계산")
+        print(f"[IK] 원본 Load 좌표 mm : [{x_mm:.1f}, {y_mm:.1f}, {z_mm:.1f}]")
+        print(f"[IK] Base 회전각       : {base_deg:.1f}°")
+        print(f"[IK] 변환 Place 좌표 mm: [{place_x_mm:.1f}, {place_y_mm:.1f}, {place_z_mm:.1f}]")
+        print(f"[IK] 변환 Place 좌표 m : {target_position_m}")
+
+        return self._calculate_ik_core(target_position_m)
+
+    def verify_fk(self, joints):
+        computed_matrix = self.chain.forward_kinematics(joints)
+        return computed_matrix[:3, 3].tolist()
