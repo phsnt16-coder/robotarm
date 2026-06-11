@@ -1,0 +1,102 @@
+import math
+
+
+def clamp(value, min_v, max_v):
+    return max(min_v, min(max_v, value))
+
+
+# ==============================
+# PICK 전용 보정값
+# B_3 Pick 실측 기준
+# 목표:
+# ID1 ≈ 52
+# ID2 ≈ 306
+# ID3 ≈ 717
+# ID4 ≈ 848
+# ID6 ≈ 498
+# ==============================
+
+PICK_BASE_OFFSET_DEG = 11.2
+PICK_SHOULDER_OFFSET_DEG = 196.8
+PICK_ELBOW_OFFSET_DEG = -72.2
+PICK_WRIST_OFFSET_DEG = 46.1
+
+
+# ==============================
+# PLACE 전용 보정값
+# 기존보다 과하게 튀지 않게 별도 유지
+# ==============================
+
+PLACE_BASE_OFFSET_DEG = 11.2
+PLACE_SHOULDER_OFFSET_DEG = 65.8
+PLACE_ELBOW_OFFSET_DEG = -72.2
+PLACE_WRIST_OFFSET_DEG = 46.1
+
+
+def ik_to_motor_degrees(joints, gripper_angle=0.0, mode="pick"):
+    """
+    IKPy radian 결과를 Motor.py 입력용 degree 값으로 변환.
+
+    mode:
+    - "pick"  : 박스 집기 전용 보정
+    - "place" : 적재 위치 전용 보정
+    """
+
+    j1 = math.degrees(joints[1])
+    j2 = math.degrees(joints[2])
+    j3 = math.degrees(joints[3])
+    j4 = math.degrees(joints[4])
+
+    if mode == "place":
+        base_offset = PLACE_BASE_OFFSET_DEG
+        shoulder_offset = PLACE_SHOULDER_OFFSET_DEG
+        elbow_offset = PLACE_ELBOW_OFFSET_DEG
+        wrist_offset = PLACE_WRIST_OFFSET_DEG
+    else:
+        base_offset = PICK_BASE_OFFSET_DEG
+        shoulder_offset = PICK_SHOULDER_OFFSET_DEG
+        elbow_offset = PICK_ELBOW_OFFSET_DEG
+        wrist_offset = PICK_WRIST_OFFSET_DEG
+
+    deg1 = j1 + base_offset
+    deg23 = j2 + shoulder_offset
+    deg45 = 110 - j3 + elbow_offset
+    deg6 = 110 + j4 + wrist_offset
+    deg7 = gripper_angle
+
+    deg1 = clamp(deg1, 0, 220)
+    deg23 = clamp(deg23, 0, 220)
+    deg45 = clamp(deg45, 0, 220)
+    deg6 = clamp(deg6, 0, 220)
+    deg7 = clamp(deg7, 0, 220)
+
+    print(f"\n[IK_ADAPTER] IK → Motor degree 변환 / mode={mode}")
+    print(f"joint1 Base     : {j1:.1f}° + {base_offset:.1f}° -> deg1  : {deg1:.1f}°")
+    print(f"joint2 Shoulder : {j2:.1f}° + {shoulder_offset:.1f}° -> deg23 : {deg23:.1f}°")
+    print(f"joint3 Elbow    : 110 - ({j3:.1f}°) + ({elbow_offset:.1f}°) -> deg45 : {deg45:.1f}°")
+    print(f"joint4 Wrist    : 110 + ({j4:.1f}°) + {wrist_offset:.1f}° -> deg6  : {deg6:.1f}°")
+    print(f"gripper angle   : {gripper_angle:.1f}° -> deg7 : {deg7:.1f}°")
+
+    return {
+        "deg1": deg1,
+        "deg23": deg23,
+        "deg45": deg45,
+        "deg6": deg6,
+        "deg7": deg7
+    }
+
+
+def camera_to_robot_pick_mm(px, py, pz):
+    return [
+        -px,
+        -py,
+        pz
+    ]
+
+
+def place_z_offset_mm(lx, ly, lz, offset_mm=-80.0):
+    return [
+        lx,
+        ly,
+        max(0.0, lz + offset_mm)
+    ]
