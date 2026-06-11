@@ -1,0 +1,61 @@
+<?xml version="1.0"?>
+<robot name="packing_robot_motor_based">
+
+  <link name="base_link"/>
+
+  <!-- Base -->
+  <joint name="joint1_base_yaw" type="revolute">
+    <parent link="base_link"/>
+    <child link="link1_base_axis"/>
+    <origin xyz="0 0 0.100" rpy="0 0 0"/>
+    <axis xyz="0 0 -1"/>
+    <limit lower="0" upper="3.839" effort="20" velocity="2.0"/>
+  </joint>
+
+  <link name="link1_base_axis"/>
+
+  <!-- Shoulder -->
+  <joint name="joint2_shoulder" type="revolute">
+    <parent link="link1_base_axis"/>
+    <child link="link2_upper_arm"/>
+    <origin xyz="0 0 0.043" rpy="0 0 0"/>
+    <axis xyz="-1 0 0"/>
+    <limit lower="-3.839" upper="3.839" effort="15" velocity="1.5"/>
+  </joint>
+
+  <link name="link2_upper_arm"/>
+
+  <!-- Elbow -->
+  <joint name="joint3_elbow" type="revolute">
+    <parent link="link2_upper_arm"/>
+    <child link="link3_forearm"/>
+    <origin xyz="0 0.116 0" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-3.839" upper="3.839" effort="15" velocity="1.5"/>
+  </joint>
+
+  <link name="link3_forearm"/>
+
+  <!-- Wrist -->
+  <joint name="joint4_wrist" type="revolute">
+    <parent link="link3_forearm"/>
+    <child link="link4_wrist"/>
+    <origin xyz="0 0.154 0" rpy="0 0 0"/>
+    <axis xyz="-1 0 0"/>
+    <limit lower="-3.839" upper="3.839" effort="12" velocity="1.5"/>
+  </joint>
+
+  <link name="link4_wrist"/>
+
+  <!-- Gripper Rotation -->
+  <joint name="joint5_gripper_rotation" type="revolute">
+    <parent link="link4_wrist"/>
+    <child link="link5_gripper"/>
+    <origin xyz="0 0.062 0" rpy="0 0 0"/>
+    <axis xyz="0 -1 0"/>
+    <limit lower="-3.839" upper="3.839" effort="10" velocity="1.5"/>
+  </joint>
+
+  <link name="link5_gripper"/>
+
+</robot>
