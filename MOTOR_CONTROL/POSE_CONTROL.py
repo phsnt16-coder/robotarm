@@ -441,27 +441,39 @@ def pose_3_go_to_place(
 # 모터 구동
 # ================================
 def act_pick(
-    min_deg=0,
-    max_deg=90
+    box_type="A_1",
+    ik_angles=None
 ):
 
-    print("\n===== ACT_PICK : IK TEST MODE =====")
+    print("\n===== 4 : ACT_PICK =====")
 
-    # 현재는 랜덤 테스트값
-    # 이후 실제 IK 결과값으로 교체 예정
-    ik_deg1 = random.uniform(min_deg, max_deg)
-    ik_deg23 = random.uniform(min_deg, max_deg)
-    ik_deg45 = random.uniform(min_deg, max_deg)
-    ik_deg6 = random.uniform(min_deg, max_deg)
-    ik_deg7 = random.uniform(min_deg, max_deg)
+    if ik_angles is None:
+
+        print("[오류] ACT_PICK는 IK 값이 필요합니다.")
+
+        return
+
+    print("[IK 사용] Pick IK 값으로 이동")
+
+    print_pose_angles(
+        "POSE 4 : ACT_PICK IK 각도",
+        ik_angles["deg1"],
+        ik_angles["deg23"],
+        ik_angles["deg45"],
+        ik_angles["deg6"],
+        ik_angles["deg7"]
+    )
 
     smooth_move_all_pose(
-        ik_deg1,
-        ik_deg23,
-        ik_deg45,
-        ik_deg6,
-        ik_deg7
+        ik_angles["deg1"],
+        ik_angles["deg23"],
+        ik_angles["deg45"],
+        ik_angles["deg6"],
+        ik_angles["deg7"]
     )
+
+    print("[그리퍼] 흡착 ON")
+    gripper_on()
 
 
 # ================================
@@ -493,6 +505,45 @@ def rotation_mode():
         target_deg7
     )
 
+#===============================
+# 적재 FC
+#================================
+def act_place(
+    ik_angles=None
+):
+
+    print("\n===== 7 : ACT_PLACE =====")
+
+    if ik_angles is None:
+
+        print("[오류] ACT_PLACE는 IK 값이 필요합니다.")
+
+        return
+
+    # 6번 ROTATION 이후의 Base 각도를 유지
+    base_after_rotation = last_deg_1
+
+    print("[IK 사용] Place IK 값으로 이동")
+
+    print_pose_angles(
+        "POSE 7 : ACT_PLACE IK 각도",
+        base_after_rotation,
+        ik_angles["deg23"],
+        ik_angles["deg45"],
+        ik_angles["deg6"],
+        ik_angles["deg7"]
+    )
+
+    smooth_move_all_pose(
+        base_after_rotation,
+        ik_angles["deg23"],
+        ik_angles["deg45"],
+        ik_angles["deg6"],
+        ik_angles["deg7"]
+    )
+
+    print("[그리퍼] 흡착 OFF")
+    gripper_off()
 
 # ================================
 # 포트 열기
