@@ -1,11 +1,23 @@
 from scservo_sdk import *
 import time
 import random
+import os
+
+# ============================================================
+# motor.py
+# 목적:
+# - FT-SCS15 로봇암 모터 제어
+# - 라즈베리파이 5 RP1 PWM 기반 진공 그리퍼 제어 통합
+# - ACT_PICK / ACT_PLACE에서 IK 각도값 기반 이동 지원
+# ============================================================
 
 # ================================
 # 통신 설정
 # ================================
-PORT = "COM6"
+# 라즈베리파이 사용 시 보통 /dev/ttyACM0 또는 /dev/ttyACM1
+# 필요하면 실행 전 환경변수로 변경 가능:
+# export ROBOT_PORT=/dev/ttyACM1
+PORT = os.environ.get("ROBOT_PORT", "/dev/ttyACM0")
 BAUD = 1000000
 
 # ================================
@@ -17,13 +29,13 @@ MAX_DEG = 220.0
 # ================================
 # 모터 ID 정의
 # ================================
-ID_1 = 1
-ID_2 = 2
-ID_3 = 3
-ID_4 = 4
-ID_5 = 5
-ID_6 = 6
-ID_7 = 7
+ID_1 = 1   # Base
+ID_2 = 2   # Shoulder Right
+ID_3 = 3   # Shoulder Left
+ID_4 = 4   # Elbow Right, old, reverse
+ID_5 = 5   # Elbow Left, new, forward
+ID_6 = 6   # Wrist
+ID_7 = 7   # Gripper rotation servo
 
 # ================================
 # 구형 FT-SCS15 속도 설정
@@ -44,28 +56,23 @@ INIT_DEG_6 = 110.0
 
 # ================================
 # 보간 설정
-# step_count:
-# 보간 단계 수
-#
-# delay:
-# 각 단계 사이 지연시간
 # ================================
 SMOOTH_STEP_COUNT = 30
 SMOOTH_DELAY = 0.03
 
 # ================================
-# 포트 객체 생성
+# 그리퍼 설정
+# ================================
+ENABLE_GRIPPER = os.environ.get("ENABLE_GRIPPER", "1") != "0"
+GRIPPER_PUMP_CHANNEL = 0
+GRIPPER_VALVE_CHANNEL = 1
+GRIPPER_HOLD_TIME = 3.0
+
+# ================================
+# 포트 / 서보 객체
 # ================================
 portHandler = PortHandler(PORT)
-
-# ================================
-# 구형 FT-SCS15 제어 객체
-# ================================
 oldServo = scscl(portHandler)
-
-# ================================
-# 신형 FT-SCS15 제어 객체
-# ================================
 newServo = sms_sts(portHandler)
 
 # ================================
@@ -78,325 +85,328 @@ last_deg_45 = None
 last_deg_6 = None
 last_deg_7 = None
 
+# 그리퍼 객체는 프로그램 시작 후 안전하게 초기화
+# import 시점에 PWM 접근하지 않도록 None으로 시작
+_gripper = None
 
-# ================================
-# 값 범위 제한 함수
-# ================================
+
+# ============================================================
+# ESP32Emulator
+# 라즈베리파이 5 RP1 PWM으로 ESP32-S3 특수 500 Hz 서보 신호 모방
+# ============================================================
+class ESP32Emulator:
+
+    def __init__(self, pump_channel=0, valve_channel=1):
+        print("\n[그리퍼 모듈] PWM 초기화")
+
+        self.pwm_base = "/sys/class/pwm/pwmchip0"
+        self.pump_ch = pump_channel
+        self.valve_ch = valve_channel
+
+        # 500 Hz = 2 ms period
+        self.period_ns = 2_000_000
+
+        # 실측 기반 duty
+        self.p_high_ns = 1_637_800
+        self.p_low_ns = 362_200
+
+        if not os.path.exists(self.pwm_base):
+            raise FileNotFoundError(
+                f"PWM 경로가 없습니다: {self.pwm_base}. "
+                "라즈베리파이 5에서 실행 중인지, PWM overlay 설정이 되었는지 확인하세요."
+            )
+
+        self._export_channel(self.pump_ch)
+        self._export_channel(self.valve_ch)
+        time.sleep(0.2)
+
+        self._clear_channel(self.pump_ch)
+        self._clear_channel(self.valve_ch)
+        self._set_period(self.pump_ch, self.period_ns)
+        self._set_period(self.valve_ch, self.period_ns)
+
+    def _channel_path(self, channel):
+        return f"{self.pwm_base}/pwm{channel}"
+
+    def _export_channel(self, channel):
+        if not os.path.exists(self._channel_path(channel)):
+            with open(f"{self.pwm_base}/export", "w") as f:
+                f.write(str(channel))
+            time.sleep(0.1)
+
+    def _clear_channel(self, channel):
+        path = self._channel_path(channel)
+        if not os.path.exists(path):
+            return
+
+        try:
+            with open(f"{path}/enable", "w") as f:
+                f.write("0")
+        except OSError:
+            pass
+
+        with open(f"{path}/duty_cycle", "w") as f:
+            f.write("0")
+
+    def _set_period(self, channel, period):
+        path = self._channel_path(channel)
+        with open(f"{path}/period", "w") as f:
+            f.write(str(period))
+
+    def _write_raw_duty(self, channel, duty_ns):
+        path = self._channel_path(channel)
+        with open(f"{path}/duty_cycle", "w") as f:
+            f.write(str(duty_ns))
+        with open(f"{path}/enable", "w") as f:
+            f.write("1")
+
+    def control(self, pump_on=True):
+        if pump_on:
+            self._write_raw_duty(self.pump_ch, self.p_high_ns)
+            self._write_raw_duty(self.valve_ch, self.p_low_ns)
+        else:
+            self._write_raw_duty(self.pump_ch, self.p_low_ns)
+            self._write_raw_duty(self.valve_ch, self.p_high_ns)
+
+    def release_hardware(self):
+        self._clear_channel(self.pump_ch)
+        self._clear_channel(self.valve_ch)
+
+
+# ============================================================
+# 공통 유틸 함수
+# ============================================================
 def clamp(value, min_v, max_v):
     return max(min_v, min(max_v, value))
 
 
-# ================================
-# 각도 -> Position 변환
-# ================================
 def deg_to_pos(deg):
-
-    deg = clamp(deg, 0, MAX_DEG)
-
+    deg = clamp(float(deg), 0, MAX_DEG)
     return int(deg * MAX_POS / MAX_DEG)
 
 
-# ================================
-# 역방향 Position 변환
-# 동기화 모터용
-# ================================
 def reverse_pos(pos):
-
-    pos = clamp(pos, 0, MAX_POS)
-
+    pos = clamp(int(pos), 0, MAX_POS)
     return MAX_POS - pos
 
 
-# ================================
-# ID1 단일 제어
-# ================================
+def print_pose_angles(title, deg1, deg23, deg45, deg6, deg7):
+    print(f"\n[{title}]")
+    print(f"ID1  Base              : {deg1:.2f} deg")
+    print(f"ID2/3 Shoulder Pair    : {deg23:.2f} deg")
+    print(f"ID4/5 Elbow Pair       : {deg45:.2f} deg")
+    print(f"ID6  Wrist             : {deg6:.2f} deg")
+    print(f"ID7  Gripper Rotation  : {deg7:.2f} deg")
+
+
+def make_ik_angles(deg1, deg23, deg45, deg6, deg7):
+    return {
+        "deg1": float(deg1),
+        "deg23": float(deg23),
+        "deg45": float(deg45),
+        "deg6": float(deg6),
+        "deg7": float(deg7),
+    }
+
+
+def input_ik_angles(default=None):
+    if default is None:
+        default = make_ik_angles(0, 0, 0, INIT_DEG_6, 0)
+
+    print("\nIK 각도 입력. 엔터만 누르면 기본값을 사용합니다.")
+    print_pose_angles(
+        "기본 IK 각도",
+        default["deg1"],
+        default["deg23"],
+        default["deg45"],
+        default["deg6"],
+        default["deg7"],
+    )
+
+    raw = input("deg1 deg23 deg45 deg6 deg7 입력: ").strip()
+    if raw == "":
+        return default
+
+    parts = raw.replace(",", " ").split()
+    if len(parts) != 5:
+        print("[오류] 각도 5개를 입력해야 합니다. 기본값을 사용합니다.")
+        return default
+
+    try:
+        return make_ik_angles(*parts)
+    except ValueError:
+        print("[오류] 숫자 변환 실패. 기본값을 사용합니다.")
+        return default
+
+
+# ============================================================
+# 그리퍼 제어 함수
+# ============================================================
+def init_gripper():
+    global _gripper
+
+    if not ENABLE_GRIPPER:
+        print("[그리퍼] ENABLE_GRIPPER=0 설정. 그리퍼 비활성화")
+        return None
+
+    if _gripper is not None:
+        return _gripper
+
+    try:
+        _gripper = ESP32Emulator(
+            pump_channel=GRIPPER_PUMP_CHANNEL,
+            valve_channel=GRIPPER_VALVE_CHANNEL,
+        )
+        return _gripper
+    except Exception as e:
+        print(f"[그리퍼 오류] 초기화 실패: {e}")
+        print("[안내] 모터만 테스트하려면 ENABLE_GRIPPER=0 으로 실행하세요.")
+        _gripper = None
+        return None
+
+
+def gripper_on():
+    gripper = init_gripper()
+    if gripper is None:
+        print("[그리퍼] 흡착 ON 생략")
+        return
+
+    print("[그리퍼] 흡착 ON")
+    gripper.control(True)
+    time.sleep(GRIPPER_HOLD_TIME)
+
+
+def gripper_off():
+    gripper = init_gripper()
+    if gripper is None:
+        print("[그리퍼] 흡착 OFF 생략")
+        return
+
+    print("[그리퍼] 흡착 OFF")
+    gripper.control(False)
+    time.sleep(GRIPPER_HOLD_TIME)
+
+
+def gripper_close():
+    global _gripper
+
+    if _gripper is None:
+        return
+
+    print("[그리퍼] 종료")
+    try:
+        _gripper.control(False)
+        time.sleep(0.5)
+        _gripper.release_hardware()
+    finally:
+        _gripper = None
+
+
+# ============================================================
+# 모터 단일 / 동기화 제어 함수
+# ============================================================
 def move_single_1(deg):
-
     global last_deg_1
-
+    deg = clamp(float(deg), 0, MAX_DEG)
     pos = deg_to_pos(deg)
-
     last_deg_1 = deg
-
-    oldServo.WritePos(
-        ID_1,
-        pos,
-        0,
-        OLD_SPEED
-    )
+    oldServo.WritePos(ID_1, pos, 0, OLD_SPEED)
 
 
-# ================================
-# ID6 단일 제어
-# ================================
 def move_single_6(deg):
-
     global last_deg_6
-
+    deg = clamp(float(deg), 0, MAX_DEG)
     pos = deg_to_pos(deg)
-
     last_deg_6 = deg
-
-    oldServo.WritePos(
-        ID_6,
-        pos,
-        0,
-        OLD_SPEED
-    )
+    oldServo.WritePos(ID_6, pos, 0, OLD_SPEED)
 
 
-# ================================
-# ID7 단일 제어
-# ================================
 def move_single_7(deg):
-
     global last_deg_7
-
+    deg = clamp(float(deg), 0, MAX_DEG)
     pos = deg_to_pos(deg)
-
     last_deg_7 = deg
-
-    oldServo.WritePos(
-        ID_7,
-        pos,
-        0,
-        OLD_SPEED
-    )
+    oldServo.WritePos(ID_7, pos, 0, OLD_SPEED)
 
 
-# ================================
-# ID2,3 동기화
-#
-# ID2:
-# 정방향
-#
-# ID3:
-# 역방향
-# ================================
 def move_sync_2_3(deg):
-
     global last_deg_23
-
+    deg = clamp(float(deg), 0, MAX_DEG)
     logical_pos = deg_to_pos(deg)
-
     pos2 = logical_pos
     pos3 = reverse_pos(logical_pos)
-
     last_deg_23 = deg
 
-    oldServo.WritePos(
-        ID_2,
-        pos2,
-        0,
-        OLD_SPEED
-    )
-
-    oldServo.WritePos(
-        ID_3,
-        pos3,
-        0,
-        OLD_SPEED
-    )
+    oldServo.WritePos(ID_2, pos2, 0, OLD_SPEED)
+    oldServo.WritePos(ID_3, pos3, 0, OLD_SPEED)
 
 
-# ================================
-# ID4,5 동기화
-#
-# ID4:
-# 구형 역방향
-#
-# ID5:
-# 신형 정방향
-# ================================
 def move_sync_4_5(deg):
-
     global last_deg_45
-
+    deg = clamp(float(deg), 0, MAX_DEG)
     logical_pos = deg_to_pos(deg)
-
     pos5 = logical_pos
     pos4 = reverse_pos(logical_pos)
-
     last_deg_45 = deg
 
-    # 신형 FT-SCS15
-    newServo.WritePosEx(
-        ID_5,
-        pos5,
-        NEW_SPEED,
-        NEW_ACC
-    )
-
-    # 구형 FT-SCS15
-    oldServo.WritePos(
-        ID_4,
-        pos4,
-        OLD_TIME,
-        OLD_SPEED
-    )
+    newServo.WritePosEx(ID_5, pos5, NEW_SPEED, NEW_ACC)
+    oldServo.WritePos(ID_4, pos4, OLD_TIME, OLD_SPEED)
 
 
-# ================================
-# 전체 축 이동 함수
-# ================================
-def move_all_pose(
-    deg1,
-    deg23,
-    deg45,
-    deg6,
-    deg7
-):
-
+# ============================================================
+# 전체 축 이동 / 보간 이동
+# ============================================================
+def move_all_pose(deg1, deg23, deg45, deg6, deg7):
     move_single_1(deg1)
-
     move_sync_2_3(deg23)
-
     move_sync_4_5(deg45)
-
     move_single_6(deg6)
-
     move_single_7(deg7)
 
 
-# ================================
-# 보간 이동 함수
-#
-# 시작 자세와 목표 자세 사이를
-# 여러 단계로 나눠 부드럽게 이동
-#
-# 현재 프로젝트에서 PID 대신 사용
-# ================================
-def smooth_move_all_pose(
-    target_deg1,
-    target_deg23,
-    target_deg45,
-    target_deg6,
-    target_deg7
-):
+def smooth_move_all_pose(target_deg1, target_deg23, target_deg45, target_deg6, target_deg7):
+    global last_deg_1, last_deg_23, last_deg_45, last_deg_6, last_deg_7
 
-    global last_deg_1
-    global last_deg_23
-    global last_deg_45
-    global last_deg_6
-    global last_deg_7
-
-    # 시작 각도 계산
     start_deg1 = last_deg_1 if last_deg_1 is not None else target_deg1
     start_deg23 = last_deg_23 if last_deg_23 is not None else target_deg23
     start_deg45 = last_deg_45 if last_deg_45 is not None else target_deg45
     start_deg6 = last_deg_6 if last_deg_6 is not None else target_deg6
     start_deg7 = last_deg_7 if last_deg_7 is not None else target_deg7
 
-    # 보간 반복
     for i in range(1, SMOOTH_STEP_COUNT + 1):
-
         ratio = i / SMOOTH_STEP_COUNT
 
-        # 중간 각도 계산
         deg1 = start_deg1 + (target_deg1 - start_deg1) * ratio
         deg23 = start_deg23 + (target_deg23 - start_deg23) * ratio
         deg45 = start_deg45 + (target_deg45 - start_deg45) * ratio
         deg6 = start_deg6 + (target_deg6 - start_deg6) * ratio
         deg7 = start_deg7 + (target_deg7 - start_deg7) * ratio
 
-        # 실제 이동
-        move_all_pose(
-            deg1,
-            deg23,
-            deg45,
-            deg6,
-            deg7
-        )
-
+        move_all_pose(deg1, deg23, deg45, deg6, deg7)
         time.sleep(SMOOTH_DELAY)
 
 
-# ================================
-# POSE 0 : SAFETY CHECK
-#
-# 목적:
-# 전체 축 정상 동작 확인
-# ================================
+# ============================================================
+# 포즈 함수
+# ============================================================
 def pose_0_safety_check():
-
     print("\n===== POSE 0 : SAFETY CHECK =====")
-
-    # 전체 0도
-    smooth_move_all_pose(
-        0,
-        0,
-        0,
-        0,
-        0
-    )
-
+    smooth_move_all_pose(0, 0, 0, 0, 0)
     time.sleep(0.5)
-
-    # 전체 10도
-    smooth_move_all_pose(
-        10,
-        10,
-        10,
-        10,
-        10
-    )
+    smooth_move_all_pose(10, 10, 10, 10, 10)
 
 
-# ================================
-# POSE 1 : BASE
-#
-# 목적:
-# 기본 대기 자세
-# ================================
 def pose_1_base():
-
     print("\n===== POSE 1 : BASE =====")
-
-    smooth_move_all_pose(
-        0,
-        0,
-        0,
-        220,
-        0
-    )
+    smooth_move_all_pose(0, 0, 0, 220, 0)
 
 
-# ================================
-# POSE 2 : PICK READY
-#
-# 목적:
-# Pick 전 대기 자세
-# ================================
 def pose_2_pick_ready():
-
     print("\n===== POSE 2 : PICK READY =====")
-
-    smooth_move_all_pose(
-        0,
-        0,
-        0,
-        110,
-        0
-    )
+    smooth_move_all_pose(0, 0, 0, INIT_DEG_6, 0)
 
 
-# ================================
-# POSE 3 : GO TO PLACE TEST
-#
-# 목적:
-# Place 이동 테스트
-#
-# 현재:
-# 랜덤값 사용
-#
-# 이후:
-# IK 값 사용 예정
-# ================================
-def pose_3_go_to_place(
-    min_deg=0,
-    max_deg=90
-):
-
+def pose_3_go_to_place(min_deg=0, max_deg=90):
     print("\n===== POSE 3 : GO TO PLACE TEST =====")
 
     deg1 = random.uniform(min_deg, max_deg)
@@ -405,63 +415,27 @@ def pose_3_go_to_place(
     deg6 = random.uniform(min_deg, max_deg)
     deg7 = random.uniform(min_deg, max_deg)
 
-    smooth_move_all_pose(
-        deg1,
-        deg23,
-        deg45,
-        deg6,
-        deg7
-    )
+    print_pose_angles("랜덤 테스트 각도", deg1, deg23, deg45, deg6, deg7)
+    smooth_move_all_pose(deg1, deg23, deg45, deg6, deg7)
 
 
-# ================================
-# ACT_PICK
-#
-# 목적:
-# 실제 Pick 동작
-#
-# 현재:
-# 랜덤 테스트값 사용
-#
-# 이후:
-# IK 결과값 사용 예정
-#
-# 최종 구조:
-#
-# 카메라 좌표
-# ↓
-# IK 계산
-# ↓
-# 관절각 생성
-# ↓
-# ACT_PICK
-# ↓
-# 보간 이동
-# ↓
-# 모터 구동
-# ================================
-def act_pick(
-    box_type="A_1",
-    ik_angles=None
-):
-
-    print("\n===== 4 : ACT_PICK =====")
+def act_pick(box_type="A_1", ik_angles=None):
+    print("\n===== POSE 4 : ACT_PICK =====")
 
     if ik_angles is None:
-
         print("[오류] ACT_PICK는 IK 값이 필요합니다.")
+        return False
 
-        return
-
+    print(f"[대상 박스] {box_type}")
     print("[IK 사용] Pick IK 값으로 이동")
 
     print_pose_angles(
-        "POSE 4 : ACT_PICK IK 각도",
+        "ACT_PICK IK 각도",
         ik_angles["deg1"],
         ik_angles["deg23"],
         ik_angles["deg45"],
         ik_angles["deg6"],
-        ik_angles["deg7"]
+        ik_angles["deg7"],
     )
 
     smooth_move_all_pose(
@@ -469,28 +443,15 @@ def act_pick(
         ik_angles["deg23"],
         ik_angles["deg45"],
         ik_angles["deg6"],
-        ik_angles["deg7"]
+        ik_angles["deg7"],
     )
 
-    print("[그리퍼] 흡착 ON")
     gripper_on()
+    return True
 
 
-# ================================
-# ROTATION MODE
-#
-# 목적:
-# 베이스 회전 테스트
-#
-# 특징:
-# ID1만 45도 회전
-# 나머지 축은 현재 상태 유지
-# ================================
-def rotation_mode():
-
-    print("\n===== ROTATION MODE =====")
-
-    target_deg1 = 45
+def rotation_mode(target_deg1=45):
+    print("\n===== POSE 5 : ROTATION MODE =====")
 
     target_deg23 = last_deg_23 if last_deg_23 is not None else 0
     target_deg45 = last_deg_45 if last_deg_45 is not None else 0
@@ -502,137 +463,129 @@ def rotation_mode():
         target_deg23,
         target_deg45,
         target_deg6,
-        target_deg7
+        target_deg7,
     )
 
-#===============================
-# 적재 FC
-#================================
-def act_place(
-    ik_angles=None
-):
 
-    print("\n===== 7 : ACT_PLACE =====")
+def act_place(ik_angles=None, keep_base_after_rotation=True):
+    print("\n===== POSE 6 : ACT_PLACE =====")
 
     if ik_angles is None:
-
         print("[오류] ACT_PLACE는 IK 값이 필요합니다.")
+        return False
 
-        return
-
-    # 6번 ROTATION 이후의 Base 각도를 유지
-    base_after_rotation = last_deg_1
+    if keep_base_after_rotation and last_deg_1 is not None:
+        target_deg1 = last_deg_1
+    else:
+        target_deg1 = ik_angles["deg1"]
 
     print("[IK 사용] Place IK 값으로 이동")
 
     print_pose_angles(
-        "POSE 7 : ACT_PLACE IK 각도",
-        base_after_rotation,
+        "ACT_PLACE IK 각도",
+        target_deg1,
         ik_angles["deg23"],
         ik_angles["deg45"],
         ik_angles["deg6"],
-        ik_angles["deg7"]
+        ik_angles["deg7"],
     )
 
     smooth_move_all_pose(
-        base_after_rotation,
+        target_deg1,
         ik_angles["deg23"],
         ik_angles["deg45"],
         ik_angles["deg6"],
-        ik_angles["deg7"]
+        ik_angles["deg7"],
     )
 
-    print("[그리퍼] 흡착 OFF")
     gripper_off()
-
-# ================================
-# 포트 열기
-# ================================
-if not portHandler.openPort():
-
-    print("포트 열기 실패")
-
-    quit()
+    return True
 
 
-# ================================
-# Baudrate 설정
-# ================================
-if not portHandler.setBaudRate(BAUD):
+# ============================================================
+# 포트 연결 / 종료
+# ============================================================
+def open_robot_port():
+    print(f"\n[통신] 포트 열기: {PORT}")
 
-    print("Baudrate 실패")
+    if not portHandler.openPort():
+        print("[오류] 포트 열기 실패")
+        return False
 
-    quit()
+    if not portHandler.setBaudRate(BAUD):
+        print("[오류] Baudrate 설정 실패")
+        portHandler.closePort()
+        return False
+
+    print("[통신] FT-SCS15 연결 완료")
+    return True
 
 
-print("FT-SCS15 보간 포즈 제어 시작")
+def close_robot():
+    gripper_close()
+    portHandler.closePort()
+    print("\n프로그램 종료")
 
 
-# ================================
+# ============================================================
 # 메인 루프
-# ================================
-while True:
+# ============================================================
+def main():
+    if not open_robot_port():
+        return
 
-    print("\n===== 포즈 선택 =====")
+    print("\nFT-SCS15 + PWM 그리퍼 통합 제어 시작")
 
-    print("0 : safety_check")
-    print("1 : base")
-    print("2 : pick_ready")
-    print("3 : go_to_place 테스트")
-    print("4 : ACT_PICK")
-    print("5 : ROTATION")
-    print("q : 종료")
+    try:
+        while True:
+            print("\n===== 포즈 선택 =====")
+            print("0 : safety_check")
+            print("1 : base")
+            print("2 : pick_ready")
+            print("3 : go_to_place 테스트")
+            print("4 : ACT_PICK, IK 입력")
+            print("5 : ROTATION, Base 45도")
+            print("6 : ACT_PLACE, IK 입력")
+            print("7 : 그리퍼 ON")
+            print("8 : 그리퍼 OFF")
+            print("q : 종료")
 
-    menu = input("선택 : ")
+            menu = input("선택 : ").strip().lower()
 
-    # 종료
-    if menu.lower() == "q":
-        break
+            if menu == "q":
+                break
+            elif menu == "0":
+                pose_0_safety_check()
+            elif menu == "1":
+                pose_1_base()
+            elif menu == "2":
+                pose_2_pick_ready()
+            elif menu == "3":
+                pose_3_go_to_place(0, 90)
+            elif menu == "4":
+                ik = input_ik_angles(
+                    default=make_ik_angles(0, 20, 20, INIT_DEG_6, 0)
+                )
+                act_pick(box_type="A_1", ik_angles=ik)
+            elif menu == "5":
+                rotation_mode(target_deg1=45)
+            elif menu == "6":
+                ik = input_ik_angles(
+                    default=make_ik_angles(45, 20, 20, INIT_DEG_6, 0)
+                )
+                act_place(ik_angles=ik)
+            elif menu == "7":
+                gripper_on()
+            elif menu == "8":
+                gripper_off()
+            else:
+                print("잘못된 입력")
 
-    # Safety Check
-    if menu == "0":
-
-        pose_0_safety_check()
-
-    # Base
-    elif menu == "1":
-
-        pose_1_base()
-
-    # Pick Ready
-    elif menu == "2":
-
-        pose_2_pick_ready()
-
-    # Go To Place
-    elif menu == "3":
-
-        pose_3_go_to_place(
-            0,
-            90
-        )
-
-    # ACT_PICK
-    elif menu == "4":
-
-        act_pick(
-            0,
-            90
-        )
-
-    # Rotation
-    elif menu == "5":
-
-        rotation_mode()
-
-    else:
-
-        print("잘못된 입력")
+    except KeyboardInterrupt:
+        print("\n[중단] 사용자 종료")
+    finally:
+        close_robot()
 
 
-# ================================
-# 포트 종료
-# ================================
-portHandler.closePort()
-
-print("프로그램 종료")
+if __name__ == "__main__":
+    main()
