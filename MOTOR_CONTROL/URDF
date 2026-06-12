@@ -1,66 +1,60 @@
 <?xml version="1.0"?>
-<robot name="packing_robot_skeleton_g_pose_ik">
+<robot name="packing_robot_skeleton_g_pose_ik_final_limited">
 
   <!--
-    IK calculation URDF with ㄱ-shape default pose.
+    IK calculation URDF with ㄱ-shape default pose and final joint limits.
     Unit: meter
 
-    Purpose:
-    - This URDF is intended for IK calculation.
-    - Zero joint state of this URDF represents the robot's Pick IK origin posture.
-    - Motor-side origin posture remains:
-        deg1  = 0
-        deg23 = 60
-        deg45 = 40
-        deg6  = 110
-        deg7  = 0
+    Confirmed motor positive directions:
+    - deg1  Base     : positive = counterclockwise
+    - deg23 Shoulder : positive = forward
+    - deg45 Elbow    : positive = folding
+    - deg6  Wrist    : positive = downward
+    - deg7  Gripper  : positive = counterclockwise
+
+    Confirmed motor logical limits:
+    - deg1  Base     : -180 ~ +180 deg
+    - deg23 Shoulder : -90  ~ +90  deg
+    - deg45 Elbow    : 0    ~ 110  deg
+    - deg6  Wrist    : 0    ~ 220  deg
+    - deg7  Gripper  : 0    ~ 220  deg
+
+    ㄱ-pose motor origin:
+    - deg1  = 0
+    - deg23 = 60
+    - deg45 = 40
+    - deg6  = 110
+    - deg7  = 0
 
     Dimensions:
-    - Ground -> Base reference height      : 0.095 m
-    - Base -> Shoulder                     : 0.040 m
-    - Shoulder -> Elbow                    : 0.120 m
-    - Elbow -> Gripper joint               : 0.160 m
-    - Gripper length                       : 0.060 m
-
-    Default ㄱ-pose fixed offsets:
-    - Shoulder origin rpy X = 60 deg  = 1.047198 rad
-    - Elbow origin rpy X    = 40 deg  = 0.698132 rad
-    - Wrist origin rpy X    = 110 deg = 1.919862 rad
+    - Ground -> Base reference height : 0.095 m
+    - Base -> Shoulder                : 0.040 m
+    - Shoulder -> Elbow               : 0.120 m
+    - Elbow -> Gripper joint          : 0.160 m
+    - Gripper length                  : 0.060 m
   -->
 
   <link name="base_link">
     <visual>
       <origin xyz="0 0 0.0475"/>
-      <geometry>
-        <box size="0.080 0.080 0.095"/>
-      </geometry>
-      <material name="gray">
-        <color rgba="0.5 0.5 0.5 1"/>
-      </material>
+      <geometry><box size="0.080 0.080 0.095"/></geometry>
+      <material name="gray"><color rgba="0.5 0.5 0.5 1"/></material>
     </visual>
     <collision>
       <origin xyz="0 0 0.0475"/>
-      <geometry>
-        <box size="0.080 0.080 0.095"/>
-      </geometry>
+      <geometry><box size="0.080 0.080 0.095"/></geometry>
     </collision>
   </link>
 
   <link name="link1_base_to_shoulder">
     <visual>
       <origin xyz="0 0 0.020"/>
-      <geometry>
-        <box size="0.040 0.040 0.040"/>
-      </geometry>
-      <material name="dark_gray">
-        <color rgba="0.3 0.3 0.3 1"/>
-      </material>
+      <geometry><box size="0.040 0.040 0.040"/></geometry>
+      <material name="dark_gray"><color rgba="0.3 0.3 0.3 1"/></material>
     </visual>
     <collision>
       <origin xyz="0 0 0.020"/>
-      <geometry>
-        <box size="0.040 0.040 0.040"/>
-      </geometry>
+      <geometry><box size="0.040 0.040 0.040"/></geometry>
     </collision>
   </link>
 
@@ -69,24 +63,18 @@
     <child link="link1_base_to_shoulder"/>
     <origin xyz="0 0 0.095" rpy="0 0 0"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-3.14159" upper="3.14159" effort="20" velocity="2.0"/>
+    <limit lower="-3.141593" upper="3.141593" effort="20" velocity="2.0"/>
   </joint>
 
   <link name="link23_shoulder_to_elbow">
     <visual>
       <origin xyz="0 0 0.060"/>
-      <geometry>
-        <box size="0.025 0.025 0.120"/>
-      </geometry>
-      <material name="blue_gray">
-        <color rgba="0.35 0.45 0.55 1"/>
-      </material>
+      <geometry><box size="0.025 0.025 0.120"/></geometry>
+      <material name="blue_gray"><color rgba="0.35 0.45 0.55 1"/></material>
     </visual>
     <collision>
       <origin xyz="0 0 0.060"/>
-      <geometry>
-        <box size="0.025 0.025 0.120"/>
-      </geometry>
+      <geometry><box size="0.025 0.025 0.120"/></geometry>
     </collision>
   </link>
 
@@ -95,24 +83,18 @@
     <child link="link23_shoulder_to_elbow"/>
     <origin xyz="0 0 0.040" rpy="1.047198 0 0"/>
     <axis xyz="1 0 0"/>
-    <limit lower="-1.5708" upper="1.5708" effort="15" velocity="1.5"/>
+    <limit lower="-0.523599" upper="2.617994" effort="15" velocity="1.5"/>
   </joint>
 
   <link name="link45_elbow_to_wrist">
     <visual>
       <origin xyz="0 0 0.080"/>
-      <geometry>
-        <box size="0.022 0.022 0.160"/>
-      </geometry>
-      <material name="steel">
-        <color rgba="0.45 0.45 0.45 1"/>
-      </material>
+      <geometry><box size="0.022 0.022 0.160"/></geometry>
+      <material name="steel"><color rgba="0.45 0.45 0.45 1"/></material>
     </visual>
     <collision>
       <origin xyz="0 0 0.080"/>
-      <geometry>
-        <box size="0.022 0.022 0.160"/>
-      </geometry>
+      <geometry><box size="0.022 0.022 0.160"/></geometry>
     </collision>
   </link>
 
@@ -121,24 +103,18 @@
     <child link="link45_elbow_to_wrist"/>
     <origin xyz="0 0 0.120" rpy="0.698132 0 0"/>
     <axis xyz="1 0 0"/>
-    <limit lower="-1.5708" upper="1.5708" effort="15" velocity="1.5"/>
+    <limit lower="-0.698132" upper="1.221730" effort="15" velocity="1.5"/>
   </joint>
 
   <link name="link6_wrist_to_gripper_joint">
     <visual>
       <origin xyz="0 0 0.030"/>
-      <geometry>
-        <box size="0.020 0.020 0.060"/>
-      </geometry>
-      <material name="black">
-        <color rgba="0.05 0.05 0.05 1"/>
-      </material>
+      <geometry><box size="0.020 0.020 0.060"/></geometry>
+      <material name="black"><color rgba="0.05 0.05 0.05 1"/></material>
     </visual>
     <collision>
       <origin xyz="0 0 0.030"/>
-      <geometry>
-        <box size="0.020 0.020 0.060"/>
-      </geometry>
+      <geometry><box size="0.020 0.020 0.060"/></geometry>
     </collision>
   </link>
 
@@ -147,24 +123,18 @@
     <child link="link6_wrist_to_gripper_joint"/>
     <origin xyz="0 0 0.160" rpy="1.919862 0 0"/>
     <axis xyz="1 0 0"/>
-    <limit lower="-2.6" upper="2.6" effort="12" velocity="1.5"/>
+    <limit lower="-1.919862" upper="1.919862" effort="12" velocity="1.5"/>
   </joint>
 
   <link name="link7_gripper_tcp">
     <visual>
       <origin xyz="0 0 0.030"/>
-      <geometry>
-        <box size="0.015 0.015 0.060"/>
-      </geometry>
-      <material name="red">
-        <color rgba="0.8 0.1 0.1 1"/>
-      </material>
+      <geometry><box size="0.015 0.015 0.060"/></geometry>
+      <material name="red"><color rgba="0.8 0.1 0.1 1"/></material>
     </visual>
     <collision>
       <origin xyz="0 0 0.030"/>
-      <geometry>
-        <box size="0.015 0.015 0.060"/>
-      </geometry>
+      <geometry><box size="0.015 0.015 0.060"/></geometry>
     </collision>
   </link>
 
@@ -173,7 +143,7 @@
     <child link="link7_gripper_tcp"/>
     <origin xyz="0 0 0.060" rpy="0 0 0"/>
     <axis xyz="0 1 0"/>
-    <limit lower="-3.14159" upper="3.14159" effort="20" velocity="2.0"/>
+    <limit lower="0.000000" upper="3.839724" effort="20" velocity="2.0"/>
   </joint>
 
 </robot>
