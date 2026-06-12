@@ -1,7 +1,5 @@
-# AttributeError: 'sms_sts' object has no attribute 'Writex'
 from scservo_sdk import *
 import time
-import random
 import os
 
 # ============================================================
@@ -10,6 +8,18 @@ import os
 # - FT-SCS15 로봇암 모터 제어
 # - 라즈베리파이 5 RP1 PWM 기반 진공 그리퍼 제어 통합
 # - ACT_PICK / ACT_PLACE에서 IK 각도값 기반 이동 지원
+#
+# 포즈 구성:
+# 0 : Safety Check
+# 1 : Base
+# 2 : Pick Ready
+# 3 : Go To Place 고정 포즈
+# 4 : ACT_PICK, Pick IK 기반 동작
+# 5 : Rotation, Base 회전
+# 6 : Place 기준 포즈, Place IK 계산 기준 원점
+# 7 : ACT_PLACE, 6번 기준 포즈 + Place IK 기반 동작
+# 8 : Gripper ON
+# 9 : Gripper OFF
 # ============================================================
 
 # ================================
@@ -51,9 +61,27 @@ NEW_SPEED = 181
 NEW_ACC = 1
 
 # ================================
-# ID6 초기 중앙각
+# 기준 각도
 # ================================
 INIT_DEG_6 = 110.0
+
+# 3번 포즈: 자/ㄴ자 형태 테스트 포즈
+POSE_3_GO_TO_PLACE = {
+    "deg1": 0.0,
+    "deg23": 60.0,
+    "deg45": 0.0,
+    "deg6": INIT_DEG_6,
+    "deg7": 0.0,
+}
+
+# 6번 포즈: Place IK 계산 기준 원점
+POSE_6_PLACE_ORIGIN = {
+    "deg1": 45.0,
+    "deg23": 20.0,
+    "deg45": 20.0,
+    "deg6": INIT_DEG_6,
+    "deg7": 0.0,
+}
 
 # ================================
 # 보간 설정
@@ -86,8 +114,10 @@ last_deg_45 = None
 last_deg_6 = None
 last_deg_7 = None
 
+# 6번 포즈 진입 여부
+place_origin_ready = False
+
 # 그리퍼 객체는 프로그램 시작 후 안전하게 초기화
-# import 시점에 PWM 접근하지 않도록 None으로 시작
 _gripper = None
 
 
@@ -146,8 +176,11 @@ class ESP32Emulator:
         except OSError:
             pass
 
-        with open(f"{path}/duty_cycle", "w") as f:
-            f.write("0")
+        try:
+            with open(f"{path}/duty_cycle", "w") as f:
+                f.write("0")
+        except OSError:
+            pass
 
     def _set_period(self, channel, period):
         path = self._channel_path(channel)
@@ -191,13 +224,13 @@ def reverse_pos(pos):
     return MAX_POS - pos
 
 
-def print__angles(title, deg1, deg23, deg45, deg6, deg7):
+def print_pose_angles(title, deg1, deg23, deg45, deg6, deg7):
     print(f"\n[{title}]")
-    print(f"ID1  Base              : {deg1:.2f} deg")
-    print(f"ID2/3 Shoulder Pair    : {deg23:.2f} deg")
-    print(f"ID4/5 Elbow Pair       : {deg45:.2f} deg")
-    print(f"ID6  Wrist             : {deg6:.2f} deg")
-    print(f"ID7  Gripper Rotation  : {deg7:.2f} deg")
+    print(f"ID1  Base              : {float(deg1):.2f} deg")
+    print(f"ID2/3 Shoulder Pair    : {float(deg23):.2f} deg")
+    print(f"ID4/5 Elbow Pair       : {float(deg45):.2f} deg")
+    print(f"ID6  Wrist             : {float(deg6):.2f} deg")
+    print(f"ID7  Gripper Rotation  : {float(deg7):.2f} deg")
 
 
 def make_ik_angles(deg1, deg23, deg45, deg6, deg7):
@@ -215,7 +248,7 @@ def input_ik_angles(default=None):
         default = make_ik_angles(0, 0, 0, INIT_DEG_6, 0)
 
     print("\nIK 각도 입력. 엔터만 누르면 기본값을 사용합니다.")
-    print__angles(
+    print_pose_angles(
         "기본 IK 각도",
         default["deg1"],
         default["deg23"],
@@ -238,6 +271,16 @@ def input_ik_angles(default=None):
     except ValueError:
         print("[오류] 숫자 변환 실패. 기본값을 사용합니다.")
         return default
+
+
+def pose_dict_to_args(pose):
+    return (
+        pose["deg1"],
+        pose["deg23"],
+        pose["deg45"],
+        pose["deg6"],
+        pose["deg7"],
+    )
 
 
 # ============================================================
@@ -350,14 +393,17 @@ def move_sync_4_5(deg):
     pos4 = reverse_pos(logical_pos)
     last_deg_45 = deg
 
-    newServo.WriPostex(ID_5, pos5, NEW_SPEED, NEW_ACC)
+    # 신형 FT-SCS15: sms_sts는 WritePosEx 사용
+    newServo.WritePosEx(ID_5, pos5, NEW_SPEED, NEW_ACC)
+
+    # 구형 FT-SCS15
     oldServo.WritePos(ID_4, pos4, OLD_TIME, OLD_SPEED)
 
 
 # ============================================================
 # 전체 축 이동 / 보간 이동
 # ============================================================
-def move_all_(deg1, deg23, deg45, deg6, deg7):
+def move_all_pose(deg1, deg23, deg45, deg6, deg7):
     move_single_1(deg1)
     move_sync_2_3(deg23)
     move_sync_4_5(deg45)
@@ -365,8 +411,14 @@ def move_all_(deg1, deg23, deg45, deg6, deg7):
     move_single_7(deg7)
 
 
-def smooth_move_all_(target_deg1, target_deg23, target_deg45, target_deg6, target_deg7):
+def smooth_move_all_pose(target_deg1, target_deg23, target_deg45, target_deg6, target_deg7):
     global last_deg_1, last_deg_23, last_deg_45, last_deg_6, last_deg_7
+
+    target_deg1 = float(target_deg1)
+    target_deg23 = float(target_deg23)
+    target_deg45 = float(target_deg45)
+    target_deg6 = float(target_deg6)
+    target_deg7 = float(target_deg7)
 
     start_deg1 = last_deg_1 if last_deg_1 is not None else target_deg1
     start_deg23 = last_deg_23 if last_deg_23 is not None else target_deg23
@@ -383,48 +435,49 @@ def smooth_move_all_(target_deg1, target_deg23, target_deg45, target_deg6, targe
         deg6 = start_deg6 + (target_deg6 - start_deg6) * ratio
         deg7 = start_deg7 + (target_deg7 - start_deg7) * ratio
 
-        move_all_(deg1, deg23, deg45, deg6, deg7)
+        move_all_pose(deg1, deg23, deg45, deg6, deg7)
         time.sleep(SMOOTH_DELAY)
 
 
 # ============================================================
 # 포즈 함수
 # ============================================================
-def _0_safety_check():
-    print("\n=====  0 : SAFETY CHECK =====")
-    smooth_move_all_(0, 0, 0, 0, 0)
+def pose_0_safety_check():
+    print("\n===== POSE 0 : SAFETY CHECK =====")
+    smooth_move_all_pose(0, 0, 0, 0, 0)
     time.sleep(0.5)
-    smooth_move_all_(10, 10, 10, 10, 10)
+    smooth_move_all_pose(10, 10, 10, 10, 10)
 
 
-def _1_base():
-    print("\n=====  1 : BASE =====")
-    smooth_move_all_(0, 30, 0, 200, 0)
+def pose_1_base():
+    print("\n===== POSE 1 : BASE =====")
+    # 사용자가 말한 Z자 기준 자세
+    smooth_move_all_pose(0, 30, 0, 200, 0)
 
 
-def _2_pick_ready():
-    print("\n=====  2 : PICK READY =====")
-    smooth_move_all_(0, 0, 0, INIT_DEG_6, 0)
+def pose_2_pick_ready():
+    print("\n===== POSE 2 : PICK READY =====")
+    smooth_move_all_pose(0, 0, 0, INIT_DEG_6, 0)
 
 
-def _3_go_to_place(min_deg=0, max_deg=90):
-    print("\n=====  3 : GO TO PLACE TEST =====")
-    smooth_move_all_(0, 60, 0, INIT_DEG_6, 0)
-
+def pose_3_go_to_place():
+    print("\n===== POSE 3 : GO TO PLACE =====")
+    smooth_move_all_pose(0, 60, 20, INIT_DEG_6, 0)
+    )
 
 
 def act_pick(box_type="A_1", ik_angles=None):
-    print("\n=====  4 : ACT_PICK =====")
+    print("\n===== POSE 4 : ACT_PICK =====")
 
     if ik_angles is None:
-        print("[오류] ACT_PICK는 IK 값이 필요합니다.")
+        print("[오류] ACT_PICK는 Pick IK 값이 필요합니다.")
         return False
 
     print(f"[대상 박스] {box_type}")
     print("[IK 사용] Pick IK 값으로 이동")
 
     print_pose_angles(
-        "ACT_PICK IK 각도",
+        "ACT_PICK Pick IK 각도",
         ik_angles["deg1"],
         ik_angles["deg23"],
         ik_angles["deg45"],
@@ -461,23 +514,34 @@ def rotation_mode(target_deg1=45):
     )
 
 
-def act_place(ik_angles=None, keep_base_after_rotation=True):
-    print("\n===== POSE 6 : ACT_PLACE =====")
+def pose_6_place_origin():
+    global place_origin_ready
+
+    print("\n===== POSE 6 : PLACE IK ORIGIN =====")
+    print("[의미] 7번 ACT_PLACE의 Place IK 계산 기준 원점")
+    print_pose_angles("POSE 6 기준 각도", *pose_dict_to_args(POSE_6_PLACE_ORIGIN))
+    smooth_move_all_pose(*pose_dict_to_args(POSE_6_PLACE_ORIGIN))
+    place_origin_ready = True
+
+
+def act_place(ik_angles=None):
+    global place_origin_ready
+
+    print("\n===== POSE 7 : ACT_PLACE =====")
 
     if ik_angles is None:
-        print("[오류] ACT_PLACE는 IK 값이 필요합니다.")
+        print("[오류] ACT_PLACE는 Place IK 값이 필요합니다.")
         return False
 
-    if keep_base_after_rotation and last_deg_1 is not None:
-        target_deg1 = last_deg_1
-    else:
-        target_deg1 = ik_angles["deg1"]
+    if not place_origin_ready:
+        print("[안내] 6번 Place 기준 포즈가 아직 실행되지 않아 먼저 6번 포즈로 이동합니다.")
+        pose_6_place_origin()
 
-    print("[IK 사용] Place IK 값으로 이동")
+    print("[IK 사용] 6번 기준 원점에서 계산된 Place IK 값으로 이동")
 
     print_pose_angles(
-        "ACT_PLACE IK 각도",
-        target_deg1,
+        "ACT_PLACE Place IK 각도",
+        ik_angles["deg1"],
         ik_angles["deg23"],
         ik_angles["deg45"],
         ik_angles["deg6"],
@@ -485,7 +549,7 @@ def act_place(ik_angles=None, keep_base_after_rotation=True):
     )
 
     smooth_move_all_pose(
-        target_deg1,
+        ik_angles["deg1"],
         ik_angles["deg23"],
         ik_angles["deg45"],
         ik_angles["deg6"],
@@ -534,14 +598,15 @@ def main():
         while True:
             print("\n===== 포즈 선택 =====")
             print("0 : safety_check")
-            print("1 : base")
+            print("1 : base, Z자 기준")
             print("2 : pick_ready")
-            print("3 : go_to_place 테스트")
-            print("4 : ACT_PICK, IK 입력")
+            print("3 : go_to_place, ㄴ자 고정 포즈")
+            print("4 : ACT_PICK, Pick IK 입력")
             print("5 : ROTATION, Base 45도")
-            print("6 : ACT_PLACE, IK 입력")
-            print("7 : 그리퍼 ON")
-            print("8 : 그리퍼 OFF")
+            print("6 : PLACE IK 기준 원점")
+            print("7 : ACT_PLACE, Place IK 입력")
+            print("8 : 그리퍼 ON")
+            print("9 : 그리퍼 OFF")
             print("q : 종료")
 
             menu = input("선택 : ").strip().lower()
@@ -551,26 +616,34 @@ def main():
             elif menu == "0":
                 pose_0_safety_check()
             elif menu == "1":
-                _1_base()
+                pose_1_base()
             elif menu == "2":
-                _2_pick_ready()
+                pose_2_pick_ready()
             elif menu == "3":
-                _3_go_to_place(0, 90)
+                pose_3_go_to_place()
             elif menu == "4":
-                ik = input_ik_angles(
+                pick_ik = input_ik_angles(
                     default=make_ik_angles(0, 20, 20, INIT_DEG_6, 0)
                 )
-                act_pick(box_type="A_1", ik_angles=ik)
+                act_pick(box_type="A_1", ik_angles=pick_ik)
             elif menu == "5":
                 rotation_mode(target_deg1=45)
             elif menu == "6":
-                ik = input_ik_angles(
-                    default=make_ik_angles(45, 20, 20, INIT_DEG_6, 0)
-                )
-                act_place(ik_angles=ik)
+                pose_6_place_origin()
             elif menu == "7":
-                gripper_on()
+                place_ik = input_ik_angles(
+                    default=make_ik_angles(
+                        POSE_6_PLACE_ORIGIN["deg1"],
+                        POSE_6_PLACE_ORIGIN["deg23"],
+                        POSE_6_PLACE_ORIGIN["deg45"],
+                        POSE_6_PLACE_ORIGIN["deg6"],
+                        POSE_6_PLACE_ORIGIN["deg7"],
+                    )
+                )
+                act_place(ik_angles=place_ik)
             elif menu == "8":
+                gripper_on()
+            elif menu == "9":
                 gripper_off()
             else:
                 print("잘못된 입력")
