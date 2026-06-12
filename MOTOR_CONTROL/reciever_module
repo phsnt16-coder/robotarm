@@ -1,10 +1,13 @@
 import time
 
-from ik_controller_motor_aligned import RobotIKController
-from motor_controller_modular import RobotArm
+from ik_controller_motor_aligned_base90 import RobotIKController
+from motor_controller_modular_base90_vacuum import RobotArm
 
 
 def parse_packet(packet_data):
+    if packet_data.get("cmd") == "shutdown":
+        return "shutdown", None, None, None
+
     required = ["label", "pick", "load", "angle"]
 
     for key in required:
@@ -25,70 +28,126 @@ def parse_packet(packet_data):
     return label, pick, load, angle
 
 
+def execute_sequence_1_2_3_4_vac_2_6_7_vacoff(arm, ik_solver, label, pick, load):
+    """
+    실제 모터 연속 시퀀스.
+
+    순서:
+        1 : BASE
+        2 : PICK_READY
+        3 : PICK 기준 포즈
+        4 : ACT_PICK, Pick IK
+        VACUUM ON : 4번 포즈 도착 직후 흡착
+        2 : PICK_READY 복귀
+        6 : PLACE 기준 포즈, Base 90도
+        7 : ACT_PLACE, Place IK
+        VACUUM OFF : 7번 포즈 도착 직후 해제
+    """
+    px, py, pz = pick
+    lx, ly, lz = load
+
+    print("\n[RECEIVER] 시퀀스 시작: 1-2-3-4-VAC_ON-2-6-7-VAC_OFF")
+
+    print("\n[SEQ 1] BASE")
+    arm.pose_1_base()
+
+    print("\n[SEQ 2] PICK_READY")
+    arm.pose_2_pick_ready()
+
+    print("\n[SEQ 3] PICK IK ORIGIN")
+    arm.pose_3_go_to_place()
+
+    print("\n[SEQ 4] ACT_PICK")
+    pick_ik = ik_solver.calculate_pick_ik([px, py, pz])
+    arm.act_pick(box_type=label, ik_angles=pick_ik)
+
+    print("\n[VACUUM] 4번 포즈 도착 직후 ON")
+    arm.vacuum_on()
+    time.sleep(0.3)
+
+    print("\n[SEQ 2] PICK_READY 복귀")
+    arm.pose_2_pick_ready()
+
+    print("\n[SEQ 6] PLACE IK ORIGIN")
+    arm.pose_6_place_origin()
+
+    place_origin_pose = arm.get_current_pose()
+
+    print("\n[SEQ 7] ACT_PLACE")
+    place_ik = ik_solver.calculate_place_ik(
+        [lx, ly, lz],
+        place_origin_pose_deg=place_origin_pose,
+    )
+    arm.act_place(ik_angles=place_ik)
+
+    print("\n[VACUUM] 7번 포즈 도착 직후 OFF")
+    arm.vacuum_off()
+    time.sleep(0.3)
+
+    print("\n[RECEIVER] 시퀀스 완료")
+
+
 def motor_control_receiver(q):
     """
-    큐 데이터 -> 3번 기준 Pick IK -> 4번 ACT_PICK
-             -> 6번 기준 Place IK -> 7번 ACT_PLACE
+    Queue 데이터 수신 후 1-2-3-4-VAC_ON-2-6-7-VAC_OFF 시퀀스 실행.
     """
-    ik_solver = RobotIKController("mybot_motor_aligned.urdf")
+    ik_solver = RobotIKController("mybot_motor_aligned_full_skeleton.urdf")
     arm = RobotArm()
 
     if not arm.open_robot_port():
-        print("[수신 모듈 오류] 로봇 포트 연결 실패")
+        print("[RECEIVER] 로봇 포트 연결 실패")
         return
 
     arm.save_initial_positions()
 
-    print("\n[수신 모듈] 가동 시작 - 데이터 대기 중...")
+    print("\n[RECEIVER] 가동 시작 - Queue 데이터 대기 중...")
 
     try:
         while True:
             if not q.empty():
                 packet_data = q.get()
-                print(f"\n[디버그용] 현재 큐 데이터: {packet_data}")
+                print(f"\n[RECEIVER] Queue 수신: {packet_data}")
 
                 try:
                     label, pick, load, angle = parse_packet(packet_data)
                 except Exception as e:
-                    print(f"[패킷 오류] {e}")
+                    print(f"[RECEIVER] 패킷 오류: {e}")
                     continue
+
+                if label == "shutdown":
+                    print("[RECEIVER] 종료 명령 수신")
+                    break
 
                 px, py, pz = pick
                 lx, ly, lz = load
 
-                print("\n" + "=" * 45)
-                print(f"[수신 성공] 라벨: {label} | 각도: {angle:.1f}°")
-                print(f" - Pick: [{px:.1f}, {py:.1f}, {pz:.1f}] mm")
-                print(f" - Load: [{lx:.1f}, {ly:.1f}, {lz:.1f}] mm")
-                print("=" * 45)
+                print("\n" + "=" * 50)
+                print(f"[RECEIVER] 라벨: {label} | 각도: {angle:.1f}°")
+                print(f"Pick: [{px:.1f}, {py:.1f}, {pz:.1f}] mm")
+                print(f"Load: [{lx:.1f}, {ly:.1f}, {lz:.1f}] mm")
+                print("=" * 50)
 
-                # 3번 포즈: Pick IK 계산 기준 원점
-                arm.pose_3_go_to_place()
-
-                # 4번 포즈: 3번 포즈 기준 Pick IK
-                pick_ik = ik_solver.calculate_pick_ik([px, py, pz])
-                arm.act_pick(box_type=label, ik_angles=pick_ik)
-
-                # 6번 포즈: Place IK 계산 기준 원점
-                arm.pose_6_place_origin()
-
-                # 6번 포즈 완료 후 마지막 명령각을 place 기준 원점으로 사용
-                place_origin_pose = arm.get_current_pose()
-
-                # 7번 포즈: 6번 포즈 기준 Place IK
-                place_ik = ik_solver.calculate_place_ik(
-                    [lx, ly, lz],
-                    place_origin_pose_deg=place_origin_pose,
+                execute_sequence_1_2_3_4_vac_2_6_7_vacoff(
+                    arm=arm,
+                    ik_solver=ik_solver,
+                    label=label,
+                    pick=pick,
+                    load=load,
                 )
-                arm.act_place(ik_angles=place_ik)
 
             time.sleep(0.01)
 
     except KeyboardInterrupt:
-        print("\n[수신 모듈] 사용자 중단")
+        print("\n[RECEIVER] 사용자 중단")
 
     finally:
+        try:
+            arm.vacuum_off()
+        except Exception:
+            pass
+
         arm.close_robot()
+        print("[RECEIVER] 종료 완료")
 
 
 if __name__ == "__main__":
