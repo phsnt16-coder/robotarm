@@ -9,7 +9,7 @@ from robot_ik import RobotIKController
 from MOTOR_CONTROL import RobotArm
 
 
-URDF_PATH = "mybot_motor_aligned_full_skeleton.urdf"
+URDF_PATH = "mybot.urdf"
 
 
 def plot_chain(chain, joints, target_position, title):
