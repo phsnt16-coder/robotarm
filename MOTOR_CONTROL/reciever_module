@@ -1,97 +1,71 @@
 import time
 
-from ik_controller_motor_aligned_base90 import RobotIKController
-from motor_controller_modular_base90_vacuum import RobotArm
+from robot_ik import RobotIKController
+from MOTOR_CONTROL_centered_fast import RobotArm
+
+
+URDF_PATH = "mybot_skeleton_logical_center.urdf"
 
 
 def parse_packet(packet_data):
     if packet_data.get("cmd") == "shutdown":
         return "shutdown", None, None, None
 
-    required = ["label", "pick", "load", "angle"]
-
-    for key in required:
-        if key not in packet_data:
-            raise KeyError(f"packet_data에 '{key}' 키가 없습니다.")
-
     label = packet_data["label"]
     pick = tuple(map(float, packet_data["pick"]))
     load = tuple(map(float, packet_data["load"]))
-    angle = float(packet_data["angle"])
-
-    if len(pick) != 3:
-        raise ValueError("pick은 [px, py, pz] 형식이어야 합니다.")
-
-    if len(load) != 3:
-        raise ValueError("load는 [lx, ly, lz] 형식이어야 합니다.")
+    angle = float(packet_data.get("angle", 0.0))
 
     return label, pick, load, angle
 
 
 def execute_sequence_1_2_3_4_3_6_7(arm, ik_solver, label, pick, load):
-    """
-    실제 모터 연속 시퀀스.
-
-    순서:
-        1 : BASE
-        2 : PICK_READY
-        3 : PICK 기준 포즈
-        4 : ACT_PICK, Pick IK
-        VACUUM ON : 4번 포즈 도착 직후 흡착
-        3 : PICK 기준 포즈 복귀
-        6 : PLACE 기준 포즈
-        7 : ACT_PLACE, Place IK
-        VACUUM OFF : 7번 포즈 도착 직후 해제
-    """
     px, py, pz = pick
     lx, ly, lz = load
 
-    print("\n[RECEIVER] 시퀀스 시작: 1-2-3-4-VAC_ON-3-6-7-VAC_OFF")
+    print("\n[RECEIVER] centered 시퀀스 시작")
 
-    print("\n[SEQ 1] BASE")
     arm.pose_1_base()
-
-    print("\n[SEQ 2] PICK_READY")
     arm.pose_2_pick_ready()
-
-    print("\n[SEQ 3] PICK IK ORIGIN")
     arm.pose_3_go_to_place()
 
-    print("\n[SEQ 4] ACT_PICK")
-    pick_ik = ik_solver.calculate_pick_ik([px, py, pz])
-    arm.act_pick(box_type=label, ik_angles=pick_ik)
+    # Pick IK는 한 번만 계산한다.
+    pick_ik = ik_solver.calculate_pick_ik(
+        [px, py, pz],
+        label=label,
+    )
 
-    print("\n[VACUUM] 4번 포즈 도착 직후 ON")
+    arm.act_pick(
+        box_type=label,
+        ik_angles=pick_ik,
+    )
+
     arm.vacuum_on()
-    time.sleep(0.3)
+    time.sleep(0.2)
 
-    print("\n[SEQ 3] PICK IK ORIGIN 복귀")
     arm.pose_3_go_to_place()
-
-    print("\n[SEQ 6] PLACE IK ORIGIN")
     arm.pose_6_place_origin()
 
     place_origin_pose = arm.get_current_pose()
 
-    print("\n[SEQ 7] ACT_PLACE")
+    # Place IK도 한 번만 계산한다.
     place_ik = ik_solver.calculate_place_ik(
         [lx, ly, lz],
         place_origin_pose_deg=place_origin_pose,
     )
-    arm.act_place(ik_angles=place_ik)
 
-    print("\n[VACUUM] 7번 포즈 도착 직후 OFF")
+    arm.act_place(
+        ik_angles=place_ik,
+    )
+
     arm.vacuum_off()
-    time.sleep(0.3)
+    time.sleep(0.2)
 
-    print("\n[RECEIVER] 시퀀스 완료")
+    print("[RECEIVER] centered 시퀀스 완료")
 
 
 def motor_control_receiver(q):
-    """
-    Queue 데이터 수신 후 1-2-3-4-3-6-7 시퀀스 실행.
-    """
-    ik_solver = RobotIKController("mybot_motor_aligned_full_skeleton.urdf")
+    ik_solver = RobotIKController(URDF_PATH)
     arm = RobotArm()
 
     if not arm.open_robot_port():
@@ -100,45 +74,36 @@ def motor_control_receiver(q):
 
     arm.save_initial_positions()
 
-    print("\n[RECEIVER] 가동 시작 - Queue 데이터 대기 중...")
+    print("\n[RECEIVER] centered 가동 시작 - Queue 대기")
 
     try:
         while True:
-            if not q.empty():
-                packet_data = q.get()
-                print(f"\n[RECEIVER] Queue 수신: {packet_data}")
+            packet_data = q.get()
 
-                try:
-                    label, pick, load, angle = parse_packet(packet_data)
-                except Exception as e:
-                    print(f"[RECEIVER] 패킷 오류: {e}")
-                    continue
+            label, pick, load, angle = parse_packet(packet_data)
 
-                if label == "shutdown":
-                    print("[RECEIVER] 종료 명령 수신")
-                    break
+            if label == "shutdown":
+                print("[RECEIVER] 종료 명령 수신")
+                break
 
-                px, py, pz = pick
-                lx, ly, lz = load
+            print(
+                f"\n[RECEIVER] {label} | "
+                f"Pick={pick} | Load={load} | Angle={angle:.1f}"
+            )
 
-                print("\n" + "=" * 50)
-                print(f"[RECEIVER] 라벨: {label} | 각도: {angle:.1f}°")
-                print(f"Pick: [{px:.1f}, {py:.1f}, {pz:.1f}] mm")
-                print(f"Load: [{lx:.1f}, {ly:.1f}, {lz:.1f}] mm")
-                print("=" * 50)
-
-                execute_sequence_1_2_3_4_3_6_7(
-                    arm=arm,
-                    ik_solver=ik_solver,
-                    label=label,
-                    pick=pick,
-                    load=load,
-                )
-
-            time.sleep(0.01)
+            execute_sequence_1_2_3_4_3_6_7(
+                arm=arm,
+                ik_solver=ik_solver,
+                label=label,
+                pick=pick,
+                load=load,
+            )
 
     except KeyboardInterrupt:
         print("\n[RECEIVER] 사용자 중단")
+
+    except Exception as e:
+        print(f"\n[RECEIVER] 오류: {e}")
 
     finally:
         try:
@@ -152,4 +117,3 @@ def motor_control_receiver(q):
 
 if __name__ == "__main__":
     print("이 파일은 multiprocessing.Process target으로 사용합니다.")
-    print("예: Process(target=motor_control_receiver, args=(q,)).start()")
