@@ -1,0 +1,96 @@
+import time
+
+from ik_controller_motor_aligned import RobotIKController
+from motor_controller_modular import RobotArm
+
+
+def parse_packet(packet_data):
+    required = ["label", "pick", "load", "angle"]
+
+    for key in required:
+        if key not in packet_data:
+            raise KeyError(f"packet_data에 '{key}' 키가 없습니다.")
+
+    label = packet_data["label"]
+    pick = tuple(map(float, packet_data["pick"]))
+    load = tuple(map(float, packet_data["load"]))
+    angle = float(packet_data["angle"])
+
+    if len(pick) != 3:
+        raise ValueError("pick은 [px, py, pz] 형식이어야 합니다.")
+
+    if len(load) != 3:
+        raise ValueError("load는 [lx, ly, lz] 형식이어야 합니다.")
+
+    return label, pick, load, angle
+
+
+def motor_control_receiver(q):
+    """
+    큐 데이터 -> 3번 기준 Pick IK -> 4번 ACT_PICK
+             -> 6번 기준 Place IK -> 7번 ACT_PLACE
+    """
+    ik_solver = RobotIKController("mybot_motor_aligned.urdf")
+    arm = RobotArm()
+
+    if not arm.open_robot_port():
+        print("[수신 모듈 오류] 로봇 포트 연결 실패")
+        return
+
+    arm.save_initial_positions()
+
+    print("\n[수신 모듈] 가동 시작 - 데이터 대기 중...")
+
+    try:
+        while True:
+            if not q.empty():
+                packet_data = q.get()
+                print(f"\n[디버그용] 현재 큐 데이터: {packet_data}")
+
+                try:
+                    label, pick, load, angle = parse_packet(packet_data)
+                except Exception as e:
+                    print(f"[패킷 오류] {e}")
+                    continue
+
+                px, py, pz = pick
+                lx, ly, lz = load
+
+                print("\n" + "=" * 45)
+                print(f"[수신 성공] 라벨: {label} | 각도: {angle:.1f}°")
+                print(f" - Pick: [{px:.1f}, {py:.1f}, {pz:.1f}] mm")
+                print(f" - Load: [{lx:.1f}, {ly:.1f}, {lz:.1f}] mm")
+                print("=" * 45)
+
+                # 3번 포즈: Pick IK 계산 기준 원점
+                arm.pose_3_go_to_place()
+
+                # 4번 포즈: 3번 포즈 기준 Pick IK
+                pick_ik = ik_solver.calculate_pick_ik([px, py, pz])
+                arm.act_pick(box_type=label, ik_angles=pick_ik)
+
+                # 6번 포즈: Place IK 계산 기준 원점
+                arm.pose_6_place_origin()
+
+                # 6번 포즈 완료 후 마지막 명령각을 place 기준 원점으로 사용
+                place_origin_pose = arm.get_current_pose()
+
+                # 7번 포즈: 6번 포즈 기준 Place IK
+                place_ik = ik_solver.calculate_place_ik(
+                    [lx, ly, lz],
+                    place_origin_pose_deg=place_origin_pose,
+                )
+                arm.act_place(ik_angles=place_ik)
+
+            time.sleep(0.01)
+
+    except KeyboardInterrupt:
+        print("\n[수신 모듈] 사용자 중단")
+
+    finally:
+        arm.close_robot()
+
+
+if __name__ == "__main__":
+    print("이 파일은 multiprocessing.Process target으로 사용합니다.")
+    print("예: Process(target=motor_control_receiver, args=(q,)).start()")
