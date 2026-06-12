@@ -1,102 +1,142 @@
 <?xml version="1.0"?>
-<robot name="packing_robot_corrected">
+<robot name="packing_robot_skeleton_logical_center">
+
+  <!--
+    IK/FK URDF for logical-angle system.
+
+    Core rule:
+      logical 0 deg = servo 110 deg
+      servo_deg = 110 + logical_deg
+
+    Practical note:
+      A 0~220 deg servo cannot express Base -180~+180 around center 110.
+      Therefore Base logical command is limited to -110~+110 in the actual controller.
+
+    Logical joint limits:
+      Base     : -110.0 ~ 110.0 deg
+      Shoulder : -90.0 ~ 90.0 deg
+      Elbow    : 0.0 ~ 110.0 deg
+      Wrist    : -110.0 ~ 110.0 deg
+      Gripper  : -110.0 ~ 110.0 deg
+
+    Dimensions:
+      Ground -> Base reference height : 0.095 m
+      Base -> Shoulder                : 0.040 m
+      Shoulder -> Elbow               : 0.120 m
+      Elbow -> Wrist/Gripper joint    : 0.160 m
+      Gripper length                  : 0.060 m
+  -->
 
   <link name="base_link">
+    <visual>
+      <origin xyz="0 0 0.0475"/>
+      <geometry><box size="0.080 0.080 0.095"/></geometry>
+      <material name="gray"><color rgba="0.5 0.5 0.5 1"/></material>
+    </visual>
     <collision>
-      <origin xyz="0 0 0.028"/> <geometry>
-        <box size="0.125 0.125 0.056"/>
-      </geometry>
+      <origin xyz="0 0 0.0475"/>
+      <geometry><box size="0.080 0.080 0.095"/></geometry>
     </collision>
   </link>
 
-  <link name="link1_shoulder_mount">
+  <link name="link1_base_to_shoulder">
+    <visual>
+      <origin xyz="0 0 0.020"/>
+      <geometry><box size="0.040 0.040 0.040"/></geometry>
+      <material name="dark_gray"><color rgba="0.3 0.3 0.3 1"/></material>
+    </visual>
     <collision>
-      <origin xyz="0 0 0.0325"/> <geometry>
-        <box size="0.125 0.125 0.065"/>
-      </geometry>
+      <origin xyz="0 0 0.020"/>
+      <geometry><box size="0.040 0.040 0.040"/></geometry>
     </collision>
   </link>
 
-  <joint name="joint1_base_yaw" type="revolute">
+  <joint name="joint1_base_yaw_id1" type="revolute">
     <parent link="base_link"/>
-    <child link="link1_shoulder_mount"/>
-    <origin xyz="0 0 0.056"/> <axis xyz="0 0 1"/>
-    <limit lower="-3.14" upper="3.14" effort="20" velocity="2.0"/>
+    <child link="link1_base_to_shoulder"/>
+    <origin xyz="0 0 0.095" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-1.919862" upper="1.919862" effort="20" velocity="2.0"/>
   </joint>
 
-  <link name="link2_upper_arm">
+  <link name="link23_shoulder_to_elbow">
+    <visual>
+      <origin xyz="0 0 0.060"/>
+      <geometry><box size="0.025 0.025 0.120"/></geometry>
+      <material name="blue_gray"><color rgba="0.35 0.45 0.55 1"/></material>
+    </visual>
     <collision>
-      <origin xyz="0 0 0.06575"/> <geometry>
-        <box size="0.0485 0.045 0.1715"/>
-      </geometry>
+      <origin xyz="0 0 0.060"/>
+      <geometry><box size="0.025 0.025 0.120"/></geometry>
     </collision>
   </link>
 
-  <joint name="joint2_shoulder" type="revolute">
-    <parent link="link1_shoulder_mount"/>
-    <child link="link2_upper_arm"/>
-    <origin xyz="0 -0.016 0.025"/> <axis xyz="1 0 0"/>
-    <limit lower="-1.57" upper="1.57" effort="15" velocity="1.5"/>
-  </joint> 
-
-  <link name="link3_forearm">
-    <collision>
-      <origin xyz="0 0 0.0565"/> <geometry>
-        <box size="0.125 0.04 0.153"/>
-      </geometry>
-    </collision>
-  </link>
-
-  <joint name="joint3_elbow" type="revolute">
-    <parent link="link2_upper_arm"/>
-    <child link="link3_forearm"/>
-    <origin xyz="0 0 0.1465"/> <axis xyz="1 0 0"/>
-    <limit lower="-2.6" upper="2.6" effort="12" velocity="1.5"/>
+  <joint name="joint23_shoulder_pair_id2_id3" type="revolute">
+    <parent link="link1_base_to_shoulder"/>
+    <child link="link23_shoulder_to_elbow"/>
+    <origin xyz="0 0 0.040" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-1.570796" upper="1.570796" effort="15" velocity="1.5"/>
   </joint>
 
-  <link name="link4_whristarm">
+  <link name="link45_elbow_to_wrist">
+    <visual>
+      <origin xyz="0 0 0.080"/>
+      <geometry><box size="0.022 0.022 0.160"/></geometry>
+      <material name="steel"><color rgba="0.45 0.45 0.45 1"/></material>
+    </visual>
     <collision>
-      <origin xyz="0 0 0.015"/> <geometry>
-        <box size="0.041 0.033 0.07"/>
-      </geometry>
+      <origin xyz="0 0 0.080"/>
+      <geometry><box size="0.022 0.022 0.160"/></geometry>
     </collision>
   </link>
 
-  <joint name="joint4_whrist" type="revolute">
-    <parent link="link3_forearm"/>
-    <child link="link4_whristarm"/>
-    <origin xyz="0 0 0.153"/> <axis xyz="0 0 1"/>
-    <limit lower="-3.14" upper="3.14" effort="20" velocity="2.0"/>
+  <joint name="joint45_elbow_pair_id4_id5" type="revolute">
+    <parent link="link23_shoulder_to_elbow"/>
+    <child link="link45_elbow_to_wrist"/>
+    <origin xyz="0 0 0.120" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="0.000000" upper="1.919862" effort="15" velocity="1.5"/>
   </joint>
 
-  <link name="link5_hand"> 
+  <link name="link6_wrist_to_gripper_joint">
+    <visual>
+      <origin xyz="0 0 0.030"/>
+      <geometry><box size="0.020 0.020 0.060"/></geometry>
+      <material name="black"><color rgba="0.05 0.05 0.05 1"/></material>
+    </visual>
     <collision>
-      <origin xyz="0.06 0 0.04"/> <geometry>
-        <box size="0.078 0.026 0.126"/>
-      </geometry>
+      <origin xyz="0 0 0.030"/>
+      <geometry><box size="0.020 0.020 0.060"/></geometry>
     </collision>
   </link>
 
-  <joint name="joint5_hand" type="revolute">
-    <parent link="link4_whristarm"/>
-    <child link="link5_hand"/>
-    <origin xyz="0 0 0.023"/> <axis xyz="1 0 0"/>
-    <limit lower="-2.6" upper="2.6" effort="12" velocity="1.5"/>
+  <joint name="joint6_wrist_id6" type="revolute">
+    <parent link="link45_elbow_to_wrist"/>
+    <child link="link6_wrist_to_gripper_joint"/>
+    <origin xyz="0 0 0.160" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-1.919862" upper="1.919862" effort="12" velocity="1.5"/>
   </joint>
 
-  <link name="link6_greaper">
+  <link name="link7_gripper_tcp">
+    <visual>
+      <origin xyz="0 0 0.030"/>
+      <geometry><box size="0.015 0.015 0.060"/></geometry>
+      <material name="red"><color rgba="0.8 0.1 0.1 1"/></material>
+    </visual>
     <collision>
-      <origin xyz="0 -0.038 0"/> <geometry>
-        <box size="0.08 0.065 0.0198"/>
-      </geometry>
+      <origin xyz="0 0 0.030"/>
+      <geometry><box size="0.015 0.015 0.060"/></geometry>
     </collision>
   </link>
 
-  <joint name="joint7_greaper" type="revolute">
-    <parent link="link5_hand"/>
-    <child link="link6_greaper"/>
-    <origin xyz="0.06 -0.007 0.059"/> <axis xyz="0 1 0"/>
-    <limit lower="-3.14" upper="3.14" effort="20" velocity="2.0"/>
+  <joint name="joint7_gripper_rotation_id7" type="revolute">
+    <parent link="link6_wrist_to_gripper_joint"/>
+    <child link="link7_gripper_tcp"/>
+    <origin xyz="0 0 0.060" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.919862" upper="1.919862" effort="20" velocity="2.0"/>
   </joint>
 
 </robot>
