@@ -462,7 +462,7 @@ def pose_2_pick_ready():
 
 def pose_3_go_to_place():
     print("\n===== POSE 3 : GO TO PLACE =====")
-    smooth_move_all_pose(0, 60, 20, INIT_DEG_6, 0)
+    smooth_move_all_pose(0, 60, -160, INIT_DEG_6, 0)
     )
 
 
