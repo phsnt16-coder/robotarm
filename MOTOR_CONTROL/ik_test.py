@@ -25,34 +25,6 @@ def safe_filename(title):
     )
 
 
-def print_debug_header(ik_solver):
-    print("\n" + "=" * 60)
-    print("[DEBUG] 실행 환경 확인")
-    print("=" * 60)
-    print(f"[DEBUG] 현재 작업 폴더     : {os.getcwd()}")
-    print(f"[DEBUG] robot_ik import 경로: {robot_ik.__file__}")
-    print(f"[DEBUG] URDF_PATH          : {URDF_PATH}")
-
-    if hasattr(ik_solver, "SERVO_DIRECTIONS"):
-        print(f"[DEBUG] SERVO_DIRECTIONS  : {ik_solver.SERVO_DIRECTIONS}")
-    else:
-        print("[DEBUG] SERVO_DIRECTIONS 없음")
-
-    if hasattr(ik_solver, "SERVO_OFFSETS"):
-        print(f"[DEBUG] SERVO_OFFSETS     : {ik_solver.SERVO_OFFSETS}")
-
-    if hasattr(ik_solver, "PICK_ORIGIN_POSE_DEG"):
-        print(f"[DEBUG] PICK_ORIGIN       : {ik_solver.PICK_ORIGIN_POSE_DEG}")
-
-    if hasattr(ik_solver, "PLACE_ORIGIN_POSE_DEG"):
-        print(f"[DEBUG] PLACE_ORIGIN      : {ik_solver.PLACE_ORIGIN_POSE_DEG}")
-
-    if hasattr(ik_solver, "GRIPPER_TCP_LENGTH_MM"):
-        print(f"[DEBUG] TCP 보정값        : {ik_solver.GRIPPER_TCP_LENGTH_MM}")
-
-    print("=" * 60)
-
-
 def plot_chain(chain, joints, target_position, title):
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
@@ -160,101 +132,23 @@ def move_real_robot(arm, motor_angles):
     print("[실제 모터 이동 완료]")
 
 
-def calculate_and_print_pick(ik_solver, pick_position_mm):
-    # 테스트 단계에서는 TCP 보정 제거
-    if hasattr(ik_solver, "GRIPPER_TCP_LENGTH_MM"):
-        ik_solver.GRIPPER_TCP_LENGTH_MM = 0.0
-
-    joints = ik_solver.calculate_pick_joints(
-        pick_position_mm
-    )
-
-    motor_angles = ik_solver.calculate_pick_ik(
-        pick_position_mm
-    )
-
-    x_mm, y_mm, z_mm = map(float, pick_position_mm)
-
-    target_position_m = [
-        x_mm / 1000.0,
-        y_mm / 1000.0,
-        z_mm / 1000.0
-    ]
-
-    print_joints(
-        ik_solver.chain,
-        joints
-    )
-
-    print_motor_angles(
-        motor_angles
-    )
-
-    validate_motor_angles(
-        motor_angles
-    )
-
-    verify_fk(
-        ik_solver.chain,
-        joints,
-        target_position_m
-    )
-
-    return joints, motor_angles, target_position_m
-
-
-def calculate_and_print_place(ik_solver, load_position_mm):
-    place_origin = ik_solver.PLACE_ORIGIN_POSE_DEG
-
-    joints = ik_solver.calculate_place_joints(
-        load_position_mm,
-        place_origin
-    )
-
-    motor_angles = ik_solver.calculate_place_ik(
-        load_position_mm,
-        place_origin
-    )
-
-    lx, ly, lz = map(float, load_position_mm)
-
-    local_x_mm, local_y_mm = ik_solver.rotate_xy_mm(
-        lx,
-        ly,
-        place_origin["deg1"]
-    )
-
-    target_position_m = [
-        local_x_mm / 1000.0,
-        local_y_mm / 1000.0,
-        lz / 1000.0
-    ]
-
-    print_joints(
-        ik_solver.chain,
-        joints
-    )
-
-    print_motor_angles(
-        motor_angles
-    )
-
-    validate_motor_angles(
-        motor_angles
-    )
-
-    verify_fk(
-        ik_solver.chain,
-        joints,
-        target_position_m
-    )
-
-    return joints, motor_angles, target_position_m
+def print_debug_header(ik_solver):
+    print("\n" + "=" * 60)
+    print("[DEBUG] 실행 환경 확인")
+    print("=" * 60)
+    print(f"[DEBUG] 현재 작업 폴더     : {os.getcwd()}")
+    print(f"[DEBUG] robot_ik import 경로: {robot_ik.__file__}")
+    print(f"[DEBUG] URDF_PATH          : {URDF_PATH}")
+    print(f"[DEBUG] SERVO_DIRECTIONS  : {ik_solver.SERVO_DIRECTIONS}")
+    print(f"[DEBUG] PICK_ORIGIN       : {ik_solver.PICK_ORIGIN_POSE_DEG}")
+    print(f"[DEBUG] PLACE_ORIGIN      : {ik_solver.PLACE_ORIGIN_POSE_DEG}")
+    print(f"[DEBUG] TCP 보정값        : {ik_solver.GRIPPER_TCP_LENGTH_MM}")
+    print("=" * 60)
 
 
 def test_pick(ik_solver, arm):
     print("\n=== PICK 좌표 입력(mm) ===")
-    print("[TCP 보정 없음] 입력한 Pick Z를 그대로 IK 목표 Z로 사용합니다.")
+    print("[TCP 보정 적용] IK 목표 Z = Pick Z - GRIPPER_TCP_LENGTH_MM")
 
     px = float(input("Pick X : "))
     py = float(input("Pick Y : "))
@@ -266,9 +160,42 @@ def test_pick(ik_solver, arm):
         pz
     ]
 
-    joints, motor_angles, target_position_m = calculate_and_print_pick(
-        ik_solver,
+    joints = ik_solver.calculate_pick_joints(
         pick_position_mm
+    )
+
+    motor_angles = ik_solver.calculate_pick_ik(
+        pick_position_mm
+    )
+
+    target_z_mm = pz - ik_solver.GRIPPER_TCP_LENGTH_MM
+
+    if target_z_mm < 0:
+        target_z_mm = 0.0
+
+    target_position_m = [
+        px / 1000.0,
+        py / 1000.0,
+        target_z_mm / 1000.0
+    ]
+
+    print_joints(
+        ik_solver.chain,
+        joints
+    )
+
+    print_motor_angles(
+        motor_angles
+    )
+
+    validate_motor_angles(
+        motor_angles
+    )
+
+    verify_fk(
+        ik_solver.chain,
+        joints,
+        target_position_m
     )
 
     save_input = input(
@@ -290,7 +217,7 @@ def test_pick(ik_solver, arm):
             ik_solver.chain,
             joints,
             target_position_m,
-            "PICK_IK_TEST_NO_TCP_OFFSET"
+            "PICK_IK_TEST_WITH_TCP_OFFSET"
         )
 
     move_input = input(
@@ -325,9 +252,47 @@ def test_place(ik_solver, arm):
         lz
     ]
 
-    joints, motor_angles, target_position_m = calculate_and_print_place(
-        ik_solver,
-        load_position_mm
+    place_origin = ik_solver.PLACE_ORIGIN_POSE_DEG
+
+    joints = ik_solver.calculate_place_joints(
+        load_position_mm,
+        place_origin
+    )
+
+    motor_angles = ik_solver.calculate_place_ik(
+        load_position_mm,
+        place_origin
+    )
+
+    local_x_mm, local_y_mm = ik_solver.rotate_xy_mm(
+        lx,
+        ly,
+        place_origin["deg1"]
+    )
+
+    target_position_m = [
+        local_x_mm / 1000.0,
+        local_y_mm / 1000.0,
+        lz / 1000.0
+    ]
+
+    print_joints(
+        ik_solver.chain,
+        joints
+    )
+
+    print_motor_angles(
+        motor_angles
+    )
+
+    validate_motor_angles(
+        motor_angles
+    )
+
+    verify_fk(
+        ik_solver.chain,
+        joints,
+        target_position_m
     )
 
     save_input = input(
@@ -376,10 +341,6 @@ def main():
         URDF_PATH
     )
 
-    # 테스트 단계에서는 TCP 보정 제거
-    if hasattr(ik_solver, "GRIPPER_TCP_LENGTH_MM"):
-        ik_solver.GRIPPER_TCP_LENGTH_MM = 0.0
-
     print_debug_header(
         ik_solver
     )
@@ -387,9 +348,8 @@ def main():
     arm = RobotArm()
 
     print("\n===== IK 실모터 검증기 =====")
-    print("[설정] TCP 보정 없음")
+    print("[설정] TCP 보정 적용")
     print("[설정] 이미지 창 표시 없음 / PNG 저장 방식")
-    print("[설정] robot_ik 경로 및 SERVO_DIRECTIONS 출력")
 
     print("1 : Pick IK")
     print("2 : Place IK")
