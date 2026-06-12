@@ -1,3 +1,4 @@
+# AttributeError: 'sms_sts' object has no attribute 'Writex'
 from scservo_sdk import *
 import time
 import random
