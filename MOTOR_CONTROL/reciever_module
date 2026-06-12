@@ -28,7 +28,7 @@ def parse_packet(packet_data):
     return label, pick, load, angle
 
 
-def execute_sequence_1_2_3_4_vac_2_6_7_vacoff(arm, ik_solver, label, pick, load):
+def execute_sequence_1_2_3_4_3_6_7(arm, ik_solver, label, pick, load):
     """
     실제 모터 연속 시퀀스.
 
@@ -38,15 +38,15 @@ def execute_sequence_1_2_3_4_vac_2_6_7_vacoff(arm, ik_solver, label, pick, load)
         3 : PICK 기준 포즈
         4 : ACT_PICK, Pick IK
         VACUUM ON : 4번 포즈 도착 직후 흡착
-        2 : PICK_READY 복귀
-        6 : PLACE 기준 포즈, Base 90도
+        3 : PICK 기준 포즈 복귀
+        6 : PLACE 기준 포즈
         7 : ACT_PLACE, Place IK
         VACUUM OFF : 7번 포즈 도착 직후 해제
     """
     px, py, pz = pick
     lx, ly, lz = load
 
-    print("\n[RECEIVER] 시퀀스 시작: 1-2-3-4-VAC_ON-2-6-7-VAC_OFF")
+    print("\n[RECEIVER] 시퀀스 시작: 1-2-3-4-VAC_ON-3-6-7-VAC_OFF")
 
     print("\n[SEQ 1] BASE")
     arm.pose_1_base()
@@ -65,8 +65,8 @@ def execute_sequence_1_2_3_4_vac_2_6_7_vacoff(arm, ik_solver, label, pick, load)
     arm.vacuum_on()
     time.sleep(0.3)
 
-    print("\n[SEQ 2] PICK_READY 복귀")
-    arm.pose_2_pick_ready()
+    print("\n[SEQ 3] PICK IK ORIGIN 복귀")
+    arm.pose_3_go_to_place()
 
     print("\n[SEQ 6] PLACE IK ORIGIN")
     arm.pose_6_place_origin()
@@ -89,7 +89,7 @@ def execute_sequence_1_2_3_4_vac_2_6_7_vacoff(arm, ik_solver, label, pick, load)
 
 def motor_control_receiver(q):
     """
-    Queue 데이터 수신 후 1-2-3-4-VAC_ON-2-6-7-VAC_OFF 시퀀스 실행.
+    Queue 데이터 수신 후 1-2-3-4-3-6-7 시퀀스 실행.
     """
     ik_solver = RobotIKController("mybot_motor_aligned_full_skeleton.urdf")
     arm = RobotArm()
@@ -127,7 +127,7 @@ def motor_control_receiver(q):
                 print(f"Load: [{lx:.1f}, {ly:.1f}, {lz:.1f}] mm")
                 print("=" * 50)
 
-                execute_sequence_1_2_3_4_vac_2_6_7_vacoff(
+                execute_sequence_1_2_3_4_3_6_7(
                     arm=arm,
                     ik_solver=ik_solver,
                     label=label,
