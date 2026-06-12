@@ -6,11 +6,21 @@ class RobotIKController:
     """
     motor_controller 기준 IK 변환 모듈.
 
-    적용 사항:
-    - TCP 보정 적용
-    - SERVO_DIRECTIONS 기반 각도 변환
-    - Shoulder / Elbow 회전량을 고려해 Wrist(deg6)를 자동 보정
-    - 목적: 그리퍼가 박스 상면과 수평에 가깝게 유지되도록 함
+    목적:
+    - IK 결과로 Shoulder(deg23), Elbow(deg45)가 변해도
+      Gripper/Wrist(deg6)가 지면 방향을 유지하도록 동적 보정
+    - 즉, Wrist가 로봇 전체 자세 변화에 대해 상대적으로 항상 110도 기준 자세를 유지하게 함
+
+    핵심 보정식:
+        deg6 = 110.0 - (deg23 - origin_deg23) - (deg45 - origin_deg45)
+
+    Pick 기준:
+        origin_deg23 = 60.0
+        origin_deg45 = 40.0
+
+    Place 기준:
+        origin_deg23 = 20.0
+        origin_deg45 = 20.0
     """
 
     URDF_PATH = "mybot.urdf"
@@ -20,17 +30,20 @@ class RobotIKController:
     DEFAULT_ORIENTATION = [0, -1, 0]
     ORIENTATION_MODE = "Y"
 
-    # 실제 흡착패드 끝단 보정 길이
+    # TCP 보정값
     GRIPPER_TCP_LENGTH_MM = -80.0
 
-    # 흡착패드가 정확히 바닥을 향하는 손목 기준각
+    # 흡착패드가 지면을 향하는 기준 Wrist 각도
     WRIST_TCP_REFERENCE_DEG = 110.0
 
-    # 그리퍼 수평 유지 보정 사용 여부
+    # Shoulder / Elbow 각도 변화에 따른 Wrist 동적 보정 사용
     ENABLE_GRIPPER_LEVELING = True
 
-    # Shoulder / Elbow가 손목 자세에 미치는 영향 계수
-    # 실제 방향이 반대로 보이면 해당 계수 부호만 바꾸면 됨
+    # 기본식:
+    # deg6 = 110 - shoulder_delta - elbow_delta
+    #
+    # 실제 보정 방향이 반대면 해당 gain을 -1.0으로 변경
+    # 보정량이 과하면 0.5, 부족하면 1.2 등으로 조정
     SHOULDER_LEVEL_GAIN = 1.0
     ELBOW_LEVEL_GAIN = 1.0
 
@@ -46,8 +59,8 @@ class RobotIKController:
     }
 
     # 현재 프로젝트 기준 방향 보정
-    # Shoulder / Elbow는 현재 정상 판정값 유지
-    # Wrist 방향은 IK 변환층에서만 조정
+    # Shoulder / Elbow는 정상 판정값 유지
+    # Wrist는 동적 보정식으로 최종 overwrite됨
     SERVO_DIRECTIONS = {
         "deg1": 1.0,
         "deg23": -1.0,
@@ -93,7 +106,9 @@ class RobotIKController:
         print(f"[robot_ik] SERVO_DIRECTIONS : {self.SERVO_DIRECTIONS}")
         print(f"[robot_ik] TCP 보정값       : {self.GRIPPER_TCP_LENGTH_MM} mm")
         print(f"[robot_ik] Wrist 기준각     : {self.WRIST_TCP_REFERENCE_DEG} deg")
-        print(f"[robot_ik] Gripper Leveling : {self.ENABLE_GRIPPER_LEVELING}")
+        print(f"[robot_ik] 동적 Wrist 보정  : {self.ENABLE_GRIPPER_LEVELING}")
+        print(f"[robot_ik] Shoulder Gain    : {self.SHOULDER_LEVEL_GAIN}")
+        print(f"[robot_ik] Elbow Gain       : {self.ELBOW_LEVEL_GAIN}")
 
     @staticmethod
     def clamp(value, min_v, max_v):
@@ -167,23 +182,27 @@ class RobotIKController:
 
     def apply_gripper_leveling(self, angles, origin_pose_deg, mode_name="PICK"):
         """
-        Shoulder와 Elbow 회전량을 고려하여 Wrist(deg6)를 자동 보정.
+        Shoulder와 Elbow의 변화량을 Wrist에 반대로 적용하여
+        그리퍼가 상대적으로 항상 110도 기준 자세를 유지하게 한다.
 
-        목적:
-            - Shoulder/Elbow가 움직여도 그리퍼가 박스 상면과 수평에 가깝게 유지
-            - 흡착패드가 바닥 방향을 유지
-
-        기본식:
+        식:
             shoulder_delta = deg23 - origin_deg23
             elbow_delta    = deg45 - origin_deg45
 
-            deg6 = WRIST_TCP_REFERENCE_DEG
+            deg6 = 110
                    - SHOULDER_LEVEL_GAIN * shoulder_delta
                    - ELBOW_LEVEL_GAIN * elbow_delta
 
-        주의:
-            실제 로봇에서 보정 방향이 반대면
-            SHOULDER_LEVEL_GAIN 또는 ELBOW_LEVEL_GAIN의 부호를 바꾸면 됨.
+        예:
+            Pick 기준 포즈가 deg23=60, deg45=40, deg6=110일 때
+            IK 결과가 deg23=70, deg45=50이면
+            shoulder_delta = +10
+            elbow_delta    = +10
+            deg6 = 110 - 10 - 10 = 90
+
+        의미:
+            어깨와 팔꿈치가 위/아래로 변한 만큼 손목이 반대로 보정되어
+            흡착패드 방향이 지면을 향하도록 유지한다.
         """
         if not self.ENABLE_GRIPPER_LEVELING:
             return angles
@@ -192,6 +211,8 @@ class RobotIKController:
 
         shoulder_delta = leveled["deg23"] - origin_pose_deg["deg23"]
         elbow_delta = leveled["deg45"] - origin_pose_deg["deg45"]
+
+        old_deg6 = leveled["deg6"]
 
         wrist_target = (
             self.WRIST_TCP_REFERENCE_DEG
@@ -205,14 +226,19 @@ class RobotIKController:
             self.SERVO_MAX_DEG,
         )
 
-        print("\n[Gripper Leveling]")
+        leveled["deg6"] = wrist_target
+
+        print("\n[Gripper Dynamic Leveling]")
         print(f"mode             : {mode_name}")
+        print(f"origin deg23     : {origin_pose_deg['deg23']:.2f} deg")
+        print(f"origin deg45     : {origin_pose_deg['deg45']:.2f} deg")
+        print(f"current deg23    : {angles['deg23']:.2f} deg")
+        print(f"current deg45    : {angles['deg45']:.2f} deg")
         print(f"shoulder_delta   : {shoulder_delta:.2f} deg")
         print(f"elbow_delta      : {elbow_delta:.2f} deg")
-        print(f"old deg6         : {leveled['deg6']:.2f} deg")
+        print(f"old deg6         : {old_deg6:.2f} deg")
         print(f"leveled deg6     : {wrist_target:.2f} deg")
-
-        leveled["deg6"] = wrist_target
+        print("[INFO] deg6는 Shoulder/Elbow 변화량을 반영해 상대적으로 110도 기준을 유지합니다.")
 
         return leveled
 
@@ -269,7 +295,7 @@ class RobotIKController:
     def calculate_place_joints(self, load_position_mm, place_origin_pose_deg=None):
         """
         7번 ACT_PLACE용 raw joints 계산.
-        Place는 TCP 보정을 적용하지 않는다.
+        Place는 현재 TCP 보정을 적용하지 않는다.
         """
         if place_origin_pose_deg is None:
             place_origin_pose_deg = self.PLACE_ORIGIN_POSE_DEG
