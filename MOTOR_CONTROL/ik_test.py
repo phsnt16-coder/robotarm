@@ -1,7 +1,10 @@
+import os
 import numpy as np
 import matplotlib
 
-matplotlib.use("TkAgg")
+# GUI 창이 안 떠도 이미지 저장이 가능하도록 Agg 사용
+# 라즈베리파이 SSH 환경에서도 동작
+matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 
@@ -10,6 +13,16 @@ from MOTOR_CONTROL import RobotArm
 
 
 URDF_PATH = "mybot.urdf"
+
+
+def safe_filename(title):
+    return (
+        title
+        .replace(" ", "_")
+        .replace("/", "_")
+        .replace(":", "_")
+        .replace("-", "_")
+    )
 
 
 def plot_chain(chain, joints, target_position, title):
@@ -32,7 +45,18 @@ def plot_chain(chain, joints, target_position, title):
     ax.set_ylim(-0.5, 0.5)
     ax.set_zlim(0, 0.6)
 
-    plt.show()
+    image_file = safe_filename(title) + ".png"
+
+    plt.savefig(
+        image_file,
+        dpi=300,
+        bbox_inches="tight"
+    )
+
+    plt.close(fig)
+
+    print(f"\n[IMAGE] 저장 완료: {image_file}")
+    print("[안내] GUI 창은 띄우지 않고 PNG 파일로 저장했습니다.")
 
 
 def save_motor_angles(filename, motor_angles):
@@ -94,8 +118,7 @@ def test_pick(ik_solver, arm):
         pz
     ]
 
-    # robot_ik 내부 calculate_pick_joints()가 GRIPPER_TCP_LENGTH_MM를 사용하더라도
-    # 현재 테스트에서는 TCP 보정을 제거하기 위해 0으로 고정한다.
+    # 테스트 단계에서는 TCP 보정 제거
     if hasattr(ik_solver, "GRIPPER_TCP_LENGTH_MM"):
         ik_solver.GRIPPER_TCP_LENGTH_MM = 0.0
 
@@ -134,6 +157,18 @@ def test_pick(ik_solver, arm):
             motor_angles
         )
 
+    image_input = input(
+        "\nURDF 자세 이미지 저장? (y/n) : "
+    )
+
+    if image_input.lower() == "y":
+        plot_chain(
+            ik_solver.chain,
+            joints,
+            target_position_m,
+            "PICK_IK_TEST_NO_TCP_OFFSET"
+        )
+
     move_input = input(
         "\n실제 모터 이동? (y/n) : "
     )
@@ -152,13 +187,6 @@ def test_pick(ik_solver, arm):
             arm,
             motor_angles
         )
-
-    plot_chain(
-        ik_solver.chain,
-        joints,
-        target_position_m,
-        "PICK IK TEST - NO TCP OFFSET"
-    )
 
 
 def test_place(ik_solver, arm):
@@ -218,6 +246,18 @@ def test_place(ik_solver, arm):
             motor_angles
         )
 
+    image_input = input(
+        "\nURDF 자세 이미지 저장? (y/n) : "
+    )
+
+    if image_input.lower() == "y":
+        plot_chain(
+            ik_solver.chain,
+            joints,
+            target_position_m,
+            "PLACE_IK_TEST"
+        )
+
     move_input = input(
         "\n실제 모터 이동? (y/n) : "
     )
@@ -237,13 +277,6 @@ def test_place(ik_solver, arm):
             motor_angles
         )
 
-    plot_chain(
-        ik_solver.chain,
-        joints,
-        target_position_m,
-        "PLACE IK TEST"
-    )
-
 
 def main():
     ik_solver = RobotIKController(
@@ -259,6 +292,7 @@ def main():
 
     print("\n===== IK 실모터 검증기 =====")
     print("[설정] TCP 보정 없음")
+    print("[설정] 이미지 창 표시 없음 / PNG 저장 방식")
 
     print("1 : Pick IK")
     print("2 : Place IK")
