@@ -1,5 +1,6 @@
 import os
 import inspect
+import time
 import numpy as np
 import matplotlib
 
@@ -15,16 +16,6 @@ from MOTOR_CONTROL import RobotArm
 URDF_PATH = "mybot.urdf"
 
 
-def safe_filename(title):
-    return (
-        title
-        .replace(" ", "_")
-        .replace("/", "_")
-        .replace(":", "_")
-        .replace("-", "_")
-    )
-
-
 def supports_label_argument(method):
     try:
         sig = inspect.signature(method)
@@ -33,198 +24,9 @@ def supports_label_argument(method):
         return False
 
 
-def safe_return_to_initial(arm):
-    """
-    테스트 1회 종료 후 로봇암을 항상 초기 자세로 복귀시킨다.
-    우선순위:
-    1. return_to_initial()
-    2. pose_1_base()
-    """
-    print("\n===== 초기 자세 복귀 =====")
-
-    try:
-        if hasattr(arm, "return_to_initial"):
-            arm.return_to_initial()
-            print("[RESET] return_to_initial() 실행 완료")
-            return
-
-        if hasattr(arm, "pose_1_base"):
-            arm.pose_1_base()
-            print("[RESET] pose_1_base() 실행 완료")
-            return
-
-        print("[RESET 경고] 초기화 함수가 없습니다.")
-
-    except Exception as e:
-        print(f"[RESET 오류] 초기 자세 복귀 실패: {e}")
-
-
-def call_calculate_pick_joints(ik_solver, pick_position_mm, label):
-    if supports_label_argument(ik_solver.calculate_pick_joints):
-        return ik_solver.calculate_pick_joints(
-            pick_position_mm,
-            label=label,
-        )
-
-    print("[경고] 현재 robot_ik.py의 calculate_pick_joints()가 label 인자를 지원하지 않습니다.")
-    print("[경고] 박스별 Pick Z Offset이 joints 계산에 직접 반영되지 않을 수 있습니다.")
-    return ik_solver.calculate_pick_joints(
-        pick_position_mm
-    )
-
-
-def call_calculate_pick_ik(ik_solver, pick_position_mm, label):
-    if supports_label_argument(ik_solver.calculate_pick_ik):
-        return ik_solver.calculate_pick_ik(
-            pick_position_mm,
-            label=label,
-        )
-
-    print("[경고] 현재 robot_ik.py의 calculate_pick_ik()가 label 인자를 지원하지 않습니다.")
-    print("[경고] 기존 robot_ik.py의 기본 Z 보정값으로 계산합니다.")
-    return ik_solver.calculate_pick_ik(
-        pick_position_mm
-    )
-
-
-def plot_chain(chain, joints, target_position, title):
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection="3d")
-
-    chain.plot(
-        joints,
-        ax,
-        target=target_position
-    )
-
-    ax.set_title(title)
-    ax.set_xlabel("X [m]")
-    ax.set_ylabel("Y [m]")
-    ax.set_zlabel("Z [m]")
-
-    ax.set_xlim(-0.5, 0.5)
-    ax.set_ylim(-0.5, 0.5)
-    ax.set_zlim(0, 0.6)
-
-    image_file = safe_filename(title) + ".png"
-
-    plt.savefig(
-        image_file,
-        dpi=300,
-        bbox_inches="tight"
-    )
-
-    plt.close(fig)
-
-    print(f"\n[IMAGE] 저장 완료: {os.path.abspath(image_file)}")
-
-
-def save_motor_angles(filename, motor_angles):
-    with open(filename, "w", encoding="utf-8") as f:
-        for key, value in motor_angles.items():
-            f.write(f"{key}={value:.3f}\n")
-
-    print(f"\n[SAVE] 저장 완료: {os.path.abspath(filename)}")
-
-
-def print_motor_angles(motor_angles):
-    print("\n[모터 입력 각도]")
-    print(f"deg1  : {motor_angles['deg1']:.2f}")
-    print(f"deg23 : {motor_angles['deg23']:.2f}")
-    print(f"deg45 : {motor_angles['deg45']:.2f}")
-    print(f"deg6  : {motor_angles['deg6']:.2f}")
-    print(f"deg7  : {motor_angles['deg7']:.2f}")
-
-
-def print_joints(chain, joints):
-    print("\n[IK Raw Joint 결과]")
-    for i, link in enumerate(chain.links):
-        print(
-            f"Link {i} ({link.name}) : "
-            f"{joints[i]:.4f} rad / {np.degrees(joints[i]):.2f} deg"
-        )
-
-
-def verify_fk(chain, joints, target_position_m):
-    computed_position = chain.forward_kinematics(joints)[:3, 3]
-
-    distance_error = np.linalg.norm(
-        np.array(target_position_m) -
-        computed_position
-    )
-
-    print("\n[FK 검증]")
-    print(f"목표 좌표      : {target_position_m}")
-    print(f"계산 좌표      : {computed_position.tolist()}")
-    print(f"직선 오차(mm)  : {distance_error * 1000:.3f}")
-
-
-def validate_motor_angles(motor_angles):
-    print("\n[각도 범위 검사]")
-
-    ok = True
-
-    for key, value in motor_angles.items():
-        if not (0.0 <= float(value) <= 220.0):
-            print(f"[경고] {key} 범위 초과: {value}")
-            ok = False
-        else:
-            print(f"[OK] {key}: {value:.2f}")
-
-    return ok
-
-
-def move_real_robot(arm, motor_angles):
-    print("\n[DEBUG] 실제 모터로 전달되는 현재 각도")
-    print_motor_angles(motor_angles)
-
-    input("\n안전 확인 후 Enter 입력 시 실제 모터 이동")
-
-    print("\n[실제 모터 테스트 시작]")
-
-    arm.smooth_move_all_pose(
-        motor_angles["deg1"],
-        motor_angles["deg23"],
-        motor_angles["deg45"],
-        motor_angles["deg6"],
-        motor_angles["deg7"]
-    )
-
-    print("[실제 모터 이동 완료]")
-
-
-def print_debug_header(ik_solver):
-    print("\n" + "=" * 60)
-    print("[DEBUG] 실행 환경 확인")
-    print("=" * 60)
-    print(f"[DEBUG] 현재 작업 폴더     : {os.getcwd()}")
-    print(f"[DEBUG] robot_ik import 경로: {robot_ik.__file__}")
-    print(f"[DEBUG] URDF_PATH          : {URDF_PATH}")
-
-    print(f"[DEBUG] calculate_pick_joints label 지원: {supports_label_argument(ik_solver.calculate_pick_joints)}")
-    print(f"[DEBUG] calculate_pick_ik label 지원    : {supports_label_argument(ik_solver.calculate_pick_ik)}")
-
-    if hasattr(ik_solver, "SERVO_DIRECTIONS"):
-        print(f"[DEBUG] SERVO_DIRECTIONS  : {ik_solver.SERVO_DIRECTIONS}")
-
-    if hasattr(ik_solver, "PICK_Z_OFFSET_BY_LABEL"):
-        print(f"[DEBUG] PICK_Z_OFFSET     : {ik_solver.PICK_Z_OFFSET_BY_LABEL}")
-    else:
-        print("[DEBUG] PICK_Z_OFFSET_BY_LABEL 없음")
-
-    if hasattr(ik_solver, "PICK_ORIGIN_POSE_DEG"):
-        print(f"[DEBUG] PICK_ORIGIN       : {ik_solver.PICK_ORIGIN_POSE_DEG}")
-
-    if hasattr(ik_solver, "PLACE_ORIGIN_POSE_DEG"):
-        print(f"[DEBUG] PLACE_ORIGIN      : {ik_solver.PLACE_ORIGIN_POSE_DEG}")
-
-    print("=" * 60)
-
-
 def input_float(prompt):
     while True:
         raw = input(prompt).strip()
-
         try:
             return float(raw)
         except ValueError:
@@ -232,39 +34,49 @@ def input_float(prompt):
 
 
 def input_label():
-    """
-    박스 라벨 직접 입력.
-    숫자 선택과 텍스트 입력 모두 허용.
-    """
-    allowed = ["A_1", "B_3", "B_8"]
+    print("\n박스 라벨 입력")
+    print("1 : A_1")
+    print("2 : B_3")
+    print("3 : B_8")
+    print("또는 직접 입력")
 
-    while True:
-        print("\n박스 라벨 입력")
-        print("1 : A_1")
-        print("2 : B_3")
-        print("3 : B_8")
-        print("또는 A_1 / B_3 / B_8 직접 입력")
+    raw = input("라벨 선택: ").strip()
 
-        raw = input("라벨 선택: ").strip()
+    if raw == "1":
+        return "A_1"
+    if raw == "2":
+        return "B_3"
+    if raw == "3":
+        return "B_8"
 
-        if raw == "1":
-            return "A_1"
+    if raw == "":
+        return "A_1"
 
-        if raw == "2":
-            return "B_3"
+    return raw
 
-        if raw == "3":
-            return "B_8"
 
-        if raw in allowed:
-            return raw
+def print_motor_angles(title, motor_angles):
+    print(f"\n[{title}]")
+    print(f"deg1  : {motor_angles['deg1']:.3f}")
+    print(f"deg23 : {motor_angles['deg23']:.3f}")
+    print(f"deg45 : {motor_angles['deg45']:.3f}")
+    print(f"deg6  : {motor_angles['deg6']:.3f}")
+    print(f"deg7  : {motor_angles['deg7']:.3f}")
 
-        retry = input(
-            f"[경고] 등록되지 않은 라벨 '{raw}' 입니다. 그대로 사용할까요? (y/n): "
-        ).strip().lower()
 
-        if retry == "y":
-            return raw
+def validate_motor_angles(motor_angles):
+    for key in ["deg1", "deg23", "deg45", "deg6", "deg7"]:
+        if key not in motor_angles:
+            print(f"[오류] {key} 누락")
+            return False
+
+        value = float(motor_angles[key])
+
+        if not (0.0 <= value <= 220.0):
+            print(f"[오류] {key} 범위 초과: {value}")
+            return False
+
+    return True
 
 
 def get_pick_target_position_m(ik_solver, pick_position_mm, label):
@@ -279,7 +91,7 @@ def get_pick_target_position_m(ik_solver, pick_position_mm, label):
 
     target_z = pz - offset
 
-    if target_z < 0:
+    if target_z < 0.0:
         target_z = 0.0
 
     return [
@@ -289,8 +101,141 @@ def get_pick_target_position_m(ik_solver, pick_position_mm, label):
     ]
 
 
-def test_pick_once(ik_solver, arm):
-    print("\n=== PICK 새 좌표 입력(mm) ===")
+def verify_fk(ik_solver, joints, target_position_m):
+    computed_position = ik_solver.chain.forward_kinematics(joints)[:3, 3]
+
+    error_mm = np.linalg.norm(
+        np.array(target_position_m) -
+        computed_position
+    ) * 1000.0
+
+    print("\n[FK 검증]")
+    print(f"목표 좌표 m : {target_position_m}")
+    print(f"계산 좌표 m : {computed_position.tolist()}")
+    print(f"오차 mm     : {error_mm:.3f}")
+
+
+def safe_return_to_initial(arm):
+    print("\n===== 초기 자세 복귀 =====")
+
+    try:
+        if hasattr(arm, "return_to_initial"):
+            arm.return_to_initial()
+        elif hasattr(arm, "pose_1_base"):
+            arm.pose_1_base()
+        else:
+            print("[경고] 초기 복귀 함수 없음")
+    except Exception as e:
+        print(f"[경고] 초기 복귀 실패: {e}")
+
+
+def reset_arm_last_command_cache(arm):
+    """
+    MOTOR_CONTROL 내부 last_deg_x는 보간 시작점으로만 쓰이지만,
+    혼동 방지를 위해 테스트 1회 시작 전 명령 캐시를 명시적으로 초기화한다.
+    """
+    for attr in [
+        "last_deg_1",
+        "last_deg_23",
+        "last_deg_45",
+        "last_deg_6",
+        "last_deg_7",
+    ]:
+        if hasattr(arm, attr):
+            setattr(arm, attr, None)
+
+    print("[DEBUG] RobotArm last_deg 캐시 초기화 완료")
+
+
+def make_new_ik_solver():
+    """
+    매 테스트마다 새로운 IK 객체를 생성한다.
+    이전 계산 결과가 객체 내부에 남아있을 가능성을 차단한다.
+    """
+    ik_solver = RobotIKController(URDF_PATH)
+
+    print("\n[DEBUG] 새 RobotIKController 생성")
+    print(f"[DEBUG] robot_ik path: {robot_ik.__file__}")
+
+    if hasattr(ik_solver, "PICK_Z_OFFSET_BY_LABEL"):
+        print(f"[DEBUG] PICK_Z_OFFSET_BY_LABEL: {ik_solver.PICK_Z_OFFSET_BY_LABEL}")
+
+    if hasattr(ik_solver, "SERVO_DIRECTIONS"):
+        print(f"[DEBUG] SERVO_DIRECTIONS: {ik_solver.SERVO_DIRECTIONS}")
+
+    return ik_solver
+
+
+def calculate_pick_once_no_cache(label, pick_position_mm):
+    """
+    핵심:
+    - 매번 새 IK 객체 사용
+    - calculate_pick_ik() 결과만 실제 이동에 사용
+    - joints는 FK 확인용으로만 별도 계산
+    - 이전 motor_angles를 전역/클래스에 저장하지 않음
+    """
+    ik_solver = make_new_ik_solver()
+
+    print("\n[현재 입력값]")
+    print(f"label : {label}")
+    print(f"pick  : {pick_position_mm}")
+
+    if supports_label_argument(ik_solver.calculate_pick_ik):
+        motor_angles = ik_solver.calculate_pick_ik(
+            pick_position_mm,
+            label=label,
+        )
+    else:
+        print("[경고] calculate_pick_ik()가 label 인자를 지원하지 않습니다.")
+        motor_angles = ik_solver.calculate_pick_ik(
+            pick_position_mm
+        )
+
+    # FK 검증용 joints 계산
+    if hasattr(ik_solver, "calculate_pick_joints"):
+        if supports_label_argument(ik_solver.calculate_pick_joints):
+            joints = ik_solver.calculate_pick_joints(
+                pick_position_mm,
+                label=label,
+            )
+        else:
+            joints = ik_solver.calculate_pick_joints(
+                pick_position_mm
+            )
+
+        target_position_m = get_pick_target_position_m(
+            ik_solver,
+            pick_position_mm,
+            label,
+        )
+
+        verify_fk(
+            ik_solver,
+            joints,
+            target_position_m,
+        )
+
+    print_motor_angles(
+        "이번 입력으로 계산된 최종 motor_angles",
+        motor_angles,
+    )
+
+    if not validate_motor_angles(motor_angles):
+        print("[안전중단] motor_angles 범위 이상")
+        return None
+
+    # 현재 입력과 결과를 식별하기 위한 로그
+    command_id = int(time.time() * 1000)
+    print(f"\n[COMMAND_ID] {command_id}")
+    print("[INFO] 이 COMMAND_ID의 motor_angles만 실제 이동에 사용됩니다.")
+
+    return motor_angles
+
+
+def test_pick_no_cache(arm):
+    print("\n===== Pick IK 무저장 테스트 =====")
+
+    reset_arm_last_command_cache(arm)
 
     label = input_label()
 
@@ -301,214 +246,48 @@ def test_pick_once(ik_solver, arm):
     pick_position_mm = [
         px,
         py,
-        pz
+        pz,
     ]
 
-    print("\n[현재 입력값]")
-    print(f"label : {label}")
-    print(f"pick  : {pick_position_mm}")
+    motor_angles = calculate_pick_once_no_cache(
+        label,
+        pick_position_mm,
+    )
 
-    try:
-        joints = call_calculate_pick_joints(
-            ik_solver,
-            pick_position_mm,
-            label,
-        )
+    if motor_angles is None:
+        return
 
-        motor_angles = call_calculate_pick_ik(
-            ik_solver,
-            pick_position_mm,
-            label,
-        )
+    move = input("\n이번 입력값으로 실제 모터 이동? (y/n): ").strip().lower()
 
-        target_position_m = get_pick_target_position_m(
-            ik_solver,
-            pick_position_mm,
-            label,
-        )
+    if move != "y":
+        print("[SKIP] 실제 이동 생략")
+        return
 
-        print_joints(
-            ik_solver.chain,
-            joints
-        )
+    print("\n[STEP] 3번 포즈 이동")
+    arm.pose_3_go_to_place()
 
-        print_motor_angles(
-            motor_angles
-        )
+    print("\n[STEP] 이번 입력값의 IK 각도로 이동")
+    print_motor_angles(
+        "실제 모터로 전달 직전 motor_angles",
+        motor_angles,
+    )
 
-        if not validate_motor_angles(motor_angles):
-            print("[안전중단] 각도 범위 이상. 실제 모터 이동을 생략합니다.")
-            return
+    input("\n안전 확인 후 Enter 입력")
 
-        verify_fk(
-            ik_solver.chain,
-            joints,
-            target_position_m
-        )
-
-        image_input = input(
-            "\nURDF 자세 이미지 저장? (y/n) : "
-        ).strip().lower()
-
-        if image_input == "y":
-            plot_chain(
-                ik_solver.chain,
-                joints,
-                target_position_m,
-                f"PICK_IK_TEST_{label}"
-            )
-
-        save_input = input(
-            "\n현재 각도 txt 저장? (y/n) : "
-        ).strip().lower()
-
-        if save_input == "y":
-            save_motor_angles(
-                f"pick_ik_result_{label}.txt",
-                motor_angles
-            )
-
-        move_input = input(
-            "\n현재 입력값으로 실제 모터 이동? (y/n) : "
-        ).strip().lower()
-
-        if move_input == "y":
-            print("\n3번 포즈 이동")
-            arm.pose_3_go_to_place()
-
-            if hasattr(arm, "get_current_pose"):
-                print("\n[DEBUG] 3번 포즈 이후 현재 명령각")
-                print(arm.get_current_pose())
-
-            move_real_robot(
-                arm,
-                motor_angles
-            )
-
-    finally:
-        safe_return_to_initial(arm)
-
-
-def test_place_once(ik_solver, arm):
-    print("\n=== LOAD 새 좌표 입력(mm) ===")
-
-    lx = input_float("Load X : ")
-    ly = input_float("Load Y : ")
-    lz = input_float("Load Z : ")
-
-    load_position_mm = [
-        lx,
-        ly,
-        lz
-    ]
-
-    print("\n[현재 입력값]")
-    print(f"load : {load_position_mm}")
-
-    try:
-        place_origin = ik_solver.PLACE_ORIGIN_POSE_DEG
-
-        joints = ik_solver.calculate_place_joints(
-            load_position_mm,
-            place_origin
-        )
-
-        motor_angles = ik_solver.calculate_place_ik(
-            load_position_mm,
-            place_origin
-        )
-
-        local_x_mm, local_y_mm = ik_solver.rotate_xy_mm(
-            lx,
-            ly,
-            place_origin["deg1"]
-        )
-
-        target_position_m = [
-            local_x_mm / 1000.0,
-            local_y_mm / 1000.0,
-            lz / 1000.0
-        ]
-
-        print_joints(
-            ik_solver.chain,
-            joints
-        )
-
-        print_motor_angles(
-            motor_angles
-        )
-
-        if not validate_motor_angles(motor_angles):
-            print("[안전중단] 각도 범위 이상. 실제 모터 이동을 생략합니다.")
-            return
-
-        verify_fk(
-            ik_solver.chain,
-            joints,
-            target_position_m
-        )
-
-        image_input = input(
-            "\nURDF 자세 이미지 저장? (y/n) : "
-        ).strip().lower()
-
-        if image_input == "y":
-            plot_chain(
-                ik_solver.chain,
-                joints,
-                target_position_m,
-                "PLACE_IK_TEST"
-            )
-
-        save_input = input(
-            "\n현재 각도 txt 저장? (y/n) : "
-        ).strip().lower()
-
-        if save_input == "y":
-            save_motor_angles(
-                "place_ik_result.txt",
-                motor_angles
-            )
-
-        move_input = input(
-            "\n현재 입력값으로 실제 모터 이동? (y/n) : "
-        ).strip().lower()
-
-        if move_input == "y":
-            print("\n6번 포즈 이동")
-            arm.pose_6_place_origin()
-
-            if hasattr(arm, "get_current_pose"):
-                print("\n[DEBUG] 6번 포즈 이후 현재 명령각")
-                print(arm.get_current_pose())
-
-            move_real_robot(
-                arm,
-                motor_angles
-            )
-
-    finally:
-        safe_return_to_initial(arm)
+    arm.act_pick(
+        box_type=label,
+        ik_angles=motor_angles,
+    )
 
 
 def main():
-    ik_solver = RobotIKController(
-        URDF_PATH
-    )
-
-    print_debug_header(
-        ik_solver
-    )
+    print("\n===== IK 무저장 / 새 입력 강제 테스터 =====")
+    print("[목적] 좌표를 바꿔도 처음 입력값으로 움직이는 문제 분리")
+    print("[정책] 매 Pick 테스트마다 새 RobotIKController 생성")
+    print("[정책] 이전 motor_angles 저장/재사용 없음")
+    print("[정책] RobotArm last_deg 캐시 초기화 후 테스트")
 
     arm = RobotArm()
-
-    print("\n===== IK 실모터 반복 검증기 =====")
-    print("[설정] 박스 라벨 직접 입력 가능")
-    print("[설정] 이전 입력값 저장 없음")
-    print("[설정] 매 테스트마다 새 입력값으로 IK 재계산")
-    print("[설정] 테스트 종료마다 초기 자세 복귀")
-    print("[설정] 이미지 창 표시 없음 / PNG 저장 방식")
 
     if not arm.open_robot_port():
         print("[오류] 로봇 포트 연결 실패")
@@ -519,38 +298,23 @@ def main():
     try:
         while True:
             print("\n메뉴")
-            print("1 : Pick IK 새 입력 테스트")
-            print("2 : Place IK 새 입력 테스트")
-            print("3 : Pick + Place 새 입력 테스트")
+            print("1 : Pick IK 새 입력 무저장 테스트")
+            print("2 : 초기 자세 복귀")
             print("q : 종료")
 
-            mode = input("\n선택 : ").strip().lower()
+            mode = input("선택: ").strip().lower()
 
             if mode == "q":
                 break
 
             if mode == "1":
-                test_pick_once(
-                    ik_solver,
-                    arm
-                )
+                try:
+                    test_pick_no_cache(arm)
+                finally:
+                    safe_return_to_initial(arm)
 
             elif mode == "2":
-                test_place_once(
-                    ik_solver,
-                    arm
-                )
-
-            elif mode == "3":
-                test_pick_once(
-                    ik_solver,
-                    arm
-                )
-
-                test_place_once(
-                    ik_solver,
-                    arm
-                )
+                safe_return_to_initial(arm)
 
             else:
                 print("[INFO] 잘못된 입력")
