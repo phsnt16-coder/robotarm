@@ -29,7 +29,7 @@ class RobotIKController:
     ORIENTATION_MODE = "Y"
 
     # TCP 보정값
-    GRIPPER_TCP_LENGTH_MM = -150.0
+    GRIPPER_TCP_LENGTH_MM = -200.0
 
     # 흡착패드가 바닥을 향하는 Wrist 기준각
     WRIST_TCP_REFERENCE_DEG = 110.0
