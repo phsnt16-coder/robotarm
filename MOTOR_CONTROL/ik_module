@@ -21,7 +21,7 @@ class RobotIKController:
     ORIENTATION_MODE = "Y"
 
     # 실제 흡착패드 끝단 보정 길이
-    GRIPPER_TCP_LENGTH_MM = 80.0
+    GRIPPER_TCP_LENGTH_MM = -80.0
 
     # 흡착패드가 정확히 바닥을 향하는 손목 기준각
     WRIST_TCP_REFERENCE_DEG = 110.0
