@@ -532,6 +532,24 @@ class RobotArm:
 
         return True
 
+    def vacuum_on(self):
+        """
+        진공 흡착 ON.
+
+        현재 파일은 모터 제어 모듈 기준이므로 실제 GPIO/PWM 제어부는
+        하드웨어 연결 방식에 맞게 이 함수 내부에 추가하면 된다.
+        """
+        print("[VACUUM] ON")
+
+    def vacuum_off(self):
+        """
+        진공 흡착 OFF.
+
+        현재 파일은 모터 제어 모듈 기준이므로 실제 GPIO/PWM 제어부는
+        하드웨어 연결 방식에 맞게 이 함수 내부에 추가하면 된다.
+        """
+        print("[VACUUM] OFF")
+
     def get_current_pose(self):
         """
         마지막으로 명령한 목표 각도 반환.
@@ -693,6 +711,14 @@ def close_robot():
 
 def get_current_pose():
     return get_default_arm().get_current_pose()
+
+
+def vacuum_on():
+    return get_default_arm().vacuum_on()
+
+
+def vacuum_off():
+    return get_default_arm().vacuum_off()
 
 
 def save_initial_positions():
