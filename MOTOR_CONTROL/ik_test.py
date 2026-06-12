@@ -48,7 +48,6 @@ def input_label():
         return "B_3"
     if raw == "3":
         return "B_8"
-
     if raw == "":
         return "A_1"
 
@@ -116,6 +115,10 @@ def verify_fk(ik_solver, joints, target_position_m):
 
 
 def safe_return_to_initial(arm):
+    """
+    사용자가 a를 입력했을 때만 호출된다.
+    테스트 종료 후 자동 복귀에는 사용하지 않는다.
+    """
     print("\n===== 초기 자세 복귀 =====")
 
     try:
@@ -129,28 +132,13 @@ def safe_return_to_initial(arm):
         print(f"[경고] 초기 복귀 실패: {e}")
 
 
-def reset_arm_last_command_cache(arm):
-    """
-    MOTOR_CONTROL 내부 last_deg_x는 보간 시작점으로만 쓰이지만,
-    혼동 방지를 위해 테스트 1회 시작 전 명령 캐시를 명시적으로 초기화한다.
-    """
-    for attr in [
-        "last_deg_1",
-        "last_deg_23",
-        "last_deg_45",
-        "last_deg_6",
-        "last_deg_7",
-    ]:
-        if hasattr(arm, attr):
-            setattr(arm, attr, None)
-
-    print("[DEBUG] RobotArm last_deg 캐시 초기화 완료")
-
-
 def make_new_ik_solver():
     """
     매 테스트마다 새로운 IK 객체를 생성한다.
-    이전 계산 결과가 객체 내부에 남아있을 가능성을 차단한다.
+    IK 계산값이 객체 내부에 남는 가능성을 차단한다.
+
+    단, RobotArm의 last_deg 캐시는 지우지 않는다.
+    last_deg는 IK 저장값이 아니라 보간 시작점이므로 유지해야 한다.
     """
     ik_solver = RobotIKController(URDF_PATH)
 
@@ -168,11 +156,10 @@ def make_new_ik_solver():
 
 def calculate_pick_once_no_cache(label, pick_position_mm):
     """
-    핵심:
     - 매번 새 IK 객체 사용
     - calculate_pick_ik() 결과만 실제 이동에 사용
-    - joints는 FK 확인용으로만 별도 계산
     - 이전 motor_angles를 전역/클래스에 저장하지 않음
+    - RobotArm last_deg 캐시는 건드리지 않음
     """
     ik_solver = make_new_ik_solver()
 
@@ -224,7 +211,6 @@ def calculate_pick_once_no_cache(label, pick_position_mm):
         print("[안전중단] motor_angles 범위 이상")
         return None
 
-    # 현재 입력과 결과를 식별하기 위한 로그
     command_id = int(time.time() * 1000)
     print(f"\n[COMMAND_ID] {command_id}")
     print("[INFO] 이 COMMAND_ID의 motor_angles만 실제 이동에 사용됩니다.")
@@ -234,8 +220,6 @@ def calculate_pick_once_no_cache(label, pick_position_mm):
 
 def test_pick_no_cache(arm):
     print("\n===== Pick IK 무저장 테스트 =====")
-
-    reset_arm_last_command_cache(arm)
 
     label = input_label()
 
@@ -285,7 +269,8 @@ def main():
     print("[목적] 좌표를 바꿔도 처음 입력값으로 움직이는 문제 분리")
     print("[정책] 매 Pick 테스트마다 새 RobotIKController 생성")
     print("[정책] 이전 motor_angles 저장/재사용 없음")
-    print("[정책] RobotArm last_deg 캐시 초기화 후 테스트")
+    print("[정책] RobotArm last_deg 캐시는 유지")
+    print("[정책] 초기 자세 복귀는 a 입력 시에만 실행")
 
     arm = RobotArm()
 
@@ -299,7 +284,7 @@ def main():
         while True:
             print("\n메뉴")
             print("1 : Pick IK 새 입력 무저장 테스트")
-            print("2 : 초기 자세 복귀")
+            print("a : 초기 자세 복귀")
             print("q : 종료")
 
             mode = input("선택: ").strip().lower()
@@ -308,19 +293,16 @@ def main():
                 break
 
             if mode == "1":
-                try:
-                    test_pick_no_cache(arm)
-                finally:
-                    safe_return_to_initial(arm)
+                test_pick_no_cache(arm)
 
-            elif mode == "2":
+            elif mode == "a":
                 safe_return_to_initial(arm)
 
             else:
                 print("[INFO] 잘못된 입력")
 
     finally:
-        safe_return_to_initial(arm)
+        # 종료 시 자동 초기화하지 않음
         arm.close_robot()
         print("\n[TEST 종료]")
 
