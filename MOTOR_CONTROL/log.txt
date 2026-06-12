@@ -1,1 +1,992 @@
 
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:85.7°
+ID2 목표Pos:398 | result:0 | error:0
+ID3 목표Pos:625 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:40.0°
+ID5 신형 목표Pos:186 | result:0 | error:0
+ID4 구형 목표Pos:837 | result:0 | error:0
+
+[ID6 단일]
+입력각도:135.7° | 목표Pos:630
+ID6 목표Pos:630 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:83.3°
+ID2 목표Pos:387 | result:0 | error:0
+ID3 목표Pos:636 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:40.0°
+ID5 신형 목표Pos:186 | result:0 | error:0
+ID4 구형 목표Pos:837 | result:0 | error:0
+
+[ID6 단일]
+입력각도:133.3° | 목표Pos:620
+ID6 목표Pos:620 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:81.0°
+ID2 목표Pos:376 | result:0 | error:0
+ID3 목표Pos:647 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:40.0°
+ID5 신형 목표Pos:186 | result:0 | error:0
+ID4 구형 목표Pos:837 | result:0 | error:0
+
+[ID6 단일]
+입력각도:131.0° | 목표Pos:609
+ID6 목표Pos:609 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:78.7°
+ID2 목표Pos:365 | result:0 | error:0
+ID3 목표Pos:658 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:40.0°
+ID5 신형 목표Pos:186 | result:0 | error:0
+ID4 구형 목표Pos:837 | result:0 | error:0
+
+[ID6 단일]
+입력각도:128.7° | 목표Pos:598
+ID6 목표Pos:598 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:76.3°
+ID2 목표Pos:354 | result:0 | error:0
+ID3 목표Pos:669 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:40.0°
+ID5 신형 목표Pos:186 | result:0 | error:0
+ID4 구형 목표Pos:837 | result:0 | error:0
+
+[ID6 단일]
+입력각도:126.3° | 목표Pos:587
+ID6 목표Pos:587 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:74.0°
+ID2 목표Pos:344 | result:0 | error:0
+ID3 목표Pos:679 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:40.0°
+ID5 신형 목표Pos:186 | result:0 | error:0
+ID4 구형 목표Pos:837 | result:0 | error:0
+
+[ID6 단일]
+입력각도:124.0° | 목표Pos:576
+ID6 목표Pos:576 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:71.7°
+ID2 목표Pos:333 | result:0 | error:0
+ID3 목표Pos:690 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:40.0°
+ID5 신형 목표Pos:186 | result:0 | error:0
+ID4 구형 목표Pos:837 | result:0 | error:0
+
+[ID6 단일]
+입력각도:121.7° | 목표Pos:565
+ID6 목표Pos:565 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:69.3°
+ID2 목표Pos:322 | result:0 | error:0
+ID3 목표Pos:701 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:40.0°
+ID5 신형 목표Pos:186 | result:0 | error:0
+ID4 구형 목표Pos:837 | result:0 | error:0
+
+[ID6 단일]
+입력각도:119.3° | 목표Pos:554
+ID6 목표Pos:554 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:67.0°
+ID2 목표Pos:311 | result:0 | error:0
+ID3 목표Pos:712 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:40.0°
+ID5 신형 목표Pos:186 | result:0 | error:0
+ID4 구형 목표Pos:837 | result:0 | error:0
+
+[ID6 단일]
+입력각도:117.0° | 목표Pos:544
+ID6 목표Pos:544 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:22 | 현재각도:4.7°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:64.7°
+ID2 목표Pos:300 | result:0 | error:0
+ID3 목표Pos:723 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:40.0°
+ID5 신형 목표Pos:186 | result:0 | error:0
+ID4 구형 목표Pos:837 | result:0 | error:0
+
+[ID6 단일]
+입력각도:114.7° | 목표Pos:533
+ID6 목표Pos:533 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:22 | 현재각도:4.7°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:62.3°
+ID2 목표Pos:289 | result:0 | error:0
+ID3 목표Pos:734 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:40.0°
+ID5 신형 목표Pos:186 | result:0 | error:0
+ID4 구형 목표Pos:837 | result:0 | error:0
+
+[ID6 단일]
+입력각도:112.3° | 목표Pos:522
+ID6 목표Pos:522 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:60.0°
+ID2 목표Pos:279 | result:0 | error:0
+ID3 목표Pos:744 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:40.0°
+ID5 신형 목표Pos:186 | result:0 | error:0
+ID4 구형 목표Pos:837 | result:0 | error:0
+
+[ID6 단일]
+입력각도:110.0° | 목표Pos:511
+ID6 목표Pos:511 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[TRACE] act_pick() 수신
+box_type  : A_1
+ik_angles : {'deg1': 0.0, 'deg23': 122.83334057465962, 'deg45': 130.00019260929977, 'deg6': 100.99998073907003, 'deg7': 0.0}
+
+===== POSE 4 : ACT_PICK =====
+[대상 박스] A_1
+[IK 사용] Pick IK 값으로 이동
+
+[ACT_PICK IK 각도]
+ID1  Base              : 0.00 deg
+ID2/3 Shoulder Pair    : 122.83 deg
+ID4/5 Elbow Pair       : 130.00 deg
+ID6  Wrist             : 101.00 deg
+ID7  Gripper Rotation  : 0.00 deg
+
+[TRACE] smooth_move_all_pose() 최종 목표각
+target_deg1  : 0.0
+target_deg23 : 122.83334057465962
+target_deg45 : 130.00019260929977
+target_deg6  : 100.99998073907003
+target_deg7  : 0.0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:62.1°
+ID2 목표Pos:288 | result:0 | error:0
+ID3 목표Pos:735 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:43.0°
+ID5 신형 목표Pos:199 | result:0 | error:0
+ID4 구형 목표Pos:824 | result:0 | error:0
+
+[ID6 단일]
+입력각도:109.7° | 목표Pos:510
+ID6 목표Pos:510 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:22 | 현재각도:4.7°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:64.2°
+ID2 목표Pos:298 | result:0 | error:0
+ID3 목표Pos:725 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:46.0°
+ID5 신형 목표Pos:213 | result:0 | error:0
+ID4 구형 목표Pos:810 | result:0 | error:0
+
+[ID6 단일]
+입력각도:109.4° | 목표Pos:508
+ID6 목표Pos:508 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:66.3°
+ID2 목표Pos:308 | result:0 | error:0
+ID3 목표Pos:715 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:49.0°
+ID5 신형 목표Pos:227 | result:0 | error:0
+ID4 구형 목표Pos:796 | result:0 | error:0
+
+[ID6 단일]
+입력각도:109.1° | 목표Pos:507
+ID6 목표Pos:507 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:68.4°
+ID2 목표Pos:317 | result:0 | error:0
+ID3 목표Pos:706 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:52.0°
+ID5 신형 목표Pos:241 | result:0 | error:0
+ID4 구형 목표Pos:782 | result:0 | error:0
+
+[ID6 단일]
+입력각도:108.8° | 목표Pos:505
+ID6 목표Pos:505 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:70.5°
+ID2 목표Pos:327 | result:0 | error:0
+ID3 목표Pos:696 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:55.0°
+ID5 신형 목표Pos:255 | result:0 | error:0
+ID4 구형 목표Pos:768 | result:0 | error:0
+
+[ID6 단일]
+입력각도:108.5° | 목표Pos:504
+ID6 목표Pos:504 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:72.6°
+ID2 목표Pos:337 | result:0 | error:0
+ID3 목표Pos:686 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:58.0°
+ID5 신형 목표Pos:269 | result:0 | error:0
+ID4 구형 목표Pos:754 | result:0 | error:0
+
+[ID6 단일]
+입력각도:108.2° | 목표Pos:503
+ID6 목표Pos:503 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:22 | 현재각도:4.7°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:74.7°
+ID2 목표Pos:347 | result:0 | error:0
+ID3 목표Pos:676 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:61.0°
+ID5 신형 목표Pos:283 | result:0 | error:0
+ID4 구형 목표Pos:740 | result:0 | error:0
+
+[ID6 단일]
+입력각도:107.9° | 목표Pos:501
+ID6 목표Pos:501 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:22 | 현재각도:4.7°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:76.8°
+ID2 목표Pos:356 | result:0 | error:0
+ID3 목표Pos:667 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:64.0°
+ID5 신형 목표Pos:297 | result:0 | error:0
+ID4 구형 목표Pos:726 | result:0 | error:0
+
+[ID6 단일]
+입력각도:107.6° | 목표Pos:500
+ID6 목표Pos:500 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:78.9°
+ID2 목표Pos:366 | result:0 | error:0
+ID3 목표Pos:657 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:67.0°
+ID5 신형 목표Pos:311 | result:0 | error:0
+ID4 구형 목표Pos:712 | result:0 | error:0
+
+[ID6 단일]
+입력각도:107.3° | 목표Pos:498
+ID6 목표Pos:498 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:80.9°
+ID2 목표Pos:376 | result:0 | error:0
+ID3 목표Pos:647 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:70.0°
+ID5 신형 목표Pos:325 | result:0 | error:0
+ID4 구형 목표Pos:698 | result:0 | error:0
+
+[ID6 단일]
+입력각도:107.0° | 목표Pos:497
+ID6 목표Pos:497 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:22 | 현재각도:4.7°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:83.0°
+ID2 목표Pos:386 | result:0 | error:0
+ID3 목표Pos:637 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:73.0°
+ID5 신형 목표Pos:339 | result:0 | error:0
+ID4 구형 목표Pos:684 | result:0 | error:0
+
+[ID6 단일]
+입력각도:106.7° | 목표Pos:496
+ID6 목표Pos:496 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:22 | 현재각도:4.7°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:85.1°
+ID2 목표Pos:395 | result:0 | error:0
+ID3 목표Pos:628 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:76.0°
+ID5 신형 목표Pos:353 | result:0 | error:0
+ID4 구형 목표Pos:670 | result:0 | error:0
+
+[ID6 단일]
+입력각도:106.4° | 목표Pos:494
+ID6 목표Pos:494 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:22 | 현재각도:4.7°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:87.2°
+ID2 목표Pos:405 | result:0 | error:0
+ID3 목표Pos:618 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:79.0°
+ID5 신형 목표Pos:367 | result:0 | error:0
+ID4 구형 목표Pos:656 | result:0 | error:0
+
+[ID6 단일]
+입력각도:106.1° | 목표Pos:493
+ID6 목표Pos:493 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:22 | 현재각도:4.7°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:89.3°
+ID2 목표Pos:415 | result:0 | error:0
+ID3 목표Pos:608 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:82.0°
+ID5 신형 목표Pos:381 | result:0 | error:0
+ID4 구형 목표Pos:642 | result:0 | error:0
+
+[ID6 단일]
+입력각도:105.8° | 목표Pos:491
+ID6 목표Pos:491 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:22 | 현재각도:4.7°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:91.4°
+ID2 목표Pos:425 | result:0 | error:0
+ID3 목표Pos:598 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:85.0°
+ID5 신형 목표Pos:395 | result:0 | error:0
+ID4 구형 목표Pos:628 | result:0 | error:0
+
+[ID6 단일]
+입력각도:105.5° | 목표Pos:490
+ID6 목표Pos:490 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:93.5°
+ID2 목표Pos:434 | result:0 | error:0
+ID3 목표Pos:589 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:88.0°
+ID5 신형 목표Pos:409 | result:0 | error:0
+ID4 구형 목표Pos:614 | result:0 | error:0
+
+[ID6 단일]
+입력각도:105.2° | 목표Pos:489
+ID6 목표Pos:489 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:95.6°
+ID2 목표Pos:444 | result:0 | error:0
+ID3 목표Pos:579 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:91.0°
+ID5 신형 목표Pos:423 | result:0 | error:0
+ID4 구형 목표Pos:600 | result:0 | error:0
+
+[ID6 단일]
+입력각도:104.9° | 목표Pos:487
+ID6 목표Pos:487 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:97.7°
+ID2 목표Pos:454 | result:0 | error:0
+ID3 목표Pos:569 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:94.0°
+ID5 신형 목표Pos:437 | result:0 | error:0
+ID4 구형 목표Pos:586 | result:0 | error:0
+
+[ID6 단일]
+입력각도:104.6° | 목표Pos:486
+ID6 목표Pos:486 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:99.8°
+ID2 목표Pos:464 | result:0 | error:0
+ID3 목표Pos:559 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:97.0°
+ID5 신형 목표Pos:451 | result:0 | error:0
+ID4 구형 목표Pos:572 | result:0 | error:0
+
+[ID6 단일]
+입력각도:104.3° | 목표Pos:484
+ID6 목표Pos:484 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:22 | 현재각도:4.7°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:101.9°
+ID2 목표Pos:473 | result:0 | error:0
+ID3 목표Pos:550 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:100.0°
+ID5 신형 목표Pos:465 | result:0 | error:0
+ID4 구형 목표Pos:558 | result:0 | error:0
+
+[ID6 단일]
+입력각도:104.0° | 목표Pos:483
+ID6 목표Pos:483 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:22 | 현재각도:4.7°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:104.0°
+ID2 목표Pos:483 | result:0 | error:0
+ID3 목표Pos:540 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:103.0°
+ID5 신형 목표Pos:478 | result:0 | error:0
+ID4 구형 목표Pos:545 | result:0 | error:0
+
+[ID6 단일]
+입력각도:103.7° | 목표Pos:482
+ID6 목표Pos:482 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:22 | 현재각도:4.7°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:106.1°
+ID2 목표Pos:493 | result:0 | error:0
+ID3 목표Pos:530 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:106.0°
+ID5 신형 목표Pos:492 | result:0 | error:0
+ID4 구형 목표Pos:531 | result:0 | error:0
+
+[ID6 단일]
+입력각도:103.4° | 목표Pos:480
+ID6 목표Pos:480 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:22 | 현재각도:4.7°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:108.2°
+ID2 목표Pos:503 | result:0 | error:0
+ID3 목표Pos:520 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:109.0°
+ID5 신형 목표Pos:506 | result:0 | error:0
+ID4 구형 목표Pos:517 | result:0 | error:0
+
+[ID6 단일]
+입력각도:103.1° | 목표Pos:479
+ID6 목표Pos:479 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:110.3°
+ID2 목표Pos:512 | result:0 | error:0
+ID3 목표Pos:511 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:112.0°
+ID5 신형 목표Pos:520 | result:0 | error:0
+ID4 구형 목표Pos:503 | result:0 | error:0
+
+[ID6 단일]
+입력각도:102.8° | 목표Pos:478
+ID6 목표Pos:478 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:22 | 현재각도:4.7°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:112.4°
+ID2 목표Pos:522 | result:0 | error:0
+ID3 목표Pos:501 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:115.0°
+ID5 신형 목표Pos:534 | result:0 | error:0
+ID4 구형 목표Pos:489 | result:0 | error:0
+
+[ID6 단일]
+입력각도:102.5° | 목표Pos:476
+ID6 목표Pos:476 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:114.5°
+ID2 목표Pos:532 | result:0 | error:0
+ID3 목표Pos:491 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:118.0°
+ID5 신형 목표Pos:548 | result:0 | error:0
+ID4 구형 목표Pos:475 | result:0 | error:0
+
+[ID6 단일]
+입력각도:102.2° | 목표Pos:475
+ID6 목표Pos:475 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:22 | 현재각도:4.7°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:116.6°
+ID2 목표Pos:541 | result:0 | error:0
+ID3 목표Pos:482 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:121.0°
+ID5 신형 목표Pos:562 | result:0 | error:0
+ID4 구형 목표Pos:461 | result:0 | error:0
+
+[ID6 단일]
+입력각도:101.9° | 목표Pos:473
+ID6 목표Pos:473 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:118.6°
+ID2 목표Pos:551 | result:0 | error:0
+ID3 목표Pos:472 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:124.0°
+ID5 신형 목표Pos:576 | result:0 | error:0
+ID4 구형 목표Pos:447 | result:0 | error:0
+
+[ID6 단일]
+입력각도:101.6° | 목표Pos:472
+ID6 목표Pos:472 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:22 | 현재각도:4.7°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:120.7°
+ID2 목표Pos:561 | result:0 | error:0
+ID3 목표Pos:462 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:127.0°
+ID5 신형 목표Pos:590 | result:0 | error:0
+ID4 구형 목표Pos:433 | result:0 | error:0
+
+[ID6 단일]
+입력각도:101.3° | 목표Pos:471
+ID6 목표Pos:471 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
+
+[ID1 단일]
+입력각도:0.0° | 목표Pos:0
+현재Pos:21 | 현재각도:4.5°
+온도:25°C | result:0 | error:0
+
+[ID2,3 동기화]
+입력각도:122.8°
+ID2 목표Pos:571 | result:0 | error:0
+ID3 목표Pos:452 | result:0 | error:0
+
+[ID4,5 동기화]
+입력각도:130.0°
+ID5 신형 목표Pos:604 | result:0 | error:0
+ID4 구형 목표Pos:419 | result:0 | error:0
+
+[ID6 단일]
+입력각도:101.0° | 목표Pos:469
+ID6 목표Pos:469 | result:0 | error:0
+
+[ID7 단일]
+입력각도:0.0° | 목표Pos:0
+ID7 목표Pos:0 | result:0 | error:0
