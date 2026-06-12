@@ -65,14 +65,6 @@ NEW_ACC = 1
 # ================================
 INIT_DEG_6 = 110.0
 
-# 3번 포즈: 자/ㄴ자 형태 테스트 포즈
-POSE_3_GO_TO_PLACE = {
-    "deg1": 0.0,
-    "deg23": 60.0,
-    "deg45": 0.0,
-    "deg6": INIT_DEG_6,
-    "deg7": 0.0,
-}
 
 # 6번 포즈: Place IK 계산 기준 원점
 POSE_6_PLACE_ORIGIN = {
