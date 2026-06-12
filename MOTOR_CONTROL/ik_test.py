@@ -82,6 +82,7 @@ def move_real_robot(arm, motor_angles):
 
 def test_pick(ik_solver, arm):
     print("\n=== PICK 좌표 입력(mm) ===")
+    print("[TCP 보정 없음] 입력한 Pick Z를 그대로 IK 목표 Z로 사용합니다.")
 
     px = float(input("Pick X : "))
     py = float(input("Pick Y : "))
@@ -92,6 +93,11 @@ def test_pick(ik_solver, arm):
         py,
         pz
     ]
+
+    # robot_ik 내부 calculate_pick_joints()가 GRIPPER_TCP_LENGTH_MM를 사용하더라도
+    # 현재 테스트에서는 TCP 보정을 제거하기 위해 0으로 고정한다.
+    if hasattr(ik_solver, "GRIPPER_TCP_LENGTH_MM"):
+        ik_solver.GRIPPER_TCP_LENGTH_MM = 0.0
 
     joints = ik_solver.calculate_pick_joints(
         pick_position_mm
@@ -105,13 +111,11 @@ def test_pick(ik_solver, arm):
         motor_angles
     )
 
+    # TCP 보정 제거: pz를 그대로 사용
     target_position_m = [
         px / 1000.0,
         py / 1000.0,
-        max(
-            0,
-            pz - ik_solver.GRIPPER_TCP_LENGTH_MM
-        ) / 1000.0
+        pz / 1000.0
     ]
 
     verify_fk(
@@ -153,7 +157,7 @@ def test_pick(ik_solver, arm):
         ik_solver.chain,
         joints,
         target_position_m,
-        "PICK IK TEST"
+        "PICK IK TEST - NO TCP OFFSET"
     )
 
 
@@ -246,9 +250,15 @@ def main():
         URDF_PATH
     )
 
+    # 테스트 단계에서는 TCP 보정 제거
+    if hasattr(ik_solver, "GRIPPER_TCP_LENGTH_MM"):
+        ik_solver.GRIPPER_TCP_LENGTH_MM = 0.0
+        print("[INFO] GRIPPER_TCP_LENGTH_MM = 0.0 으로 설정")
+
     arm = RobotArm()
 
     print("\n===== IK 실모터 검증기 =====")
+    print("[설정] TCP 보정 없음")
 
     print("1 : Pick IK")
     print("2 : Place IK")
