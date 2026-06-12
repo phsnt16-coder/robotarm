@@ -190,7 +190,7 @@ def reverse_pos(pos):
     return MAX_POS - pos
 
 
-def print_pose_angles(title, deg1, deg23, deg45, deg6, deg7):
+def print__angles(title, deg1, deg23, deg45, deg6, deg7):
     print(f"\n[{title}]")
     print(f"ID1  Base              : {deg1:.2f} deg")
     print(f"ID2/3 Shoulder Pair    : {deg23:.2f} deg")
@@ -214,7 +214,7 @@ def input_ik_angles(default=None):
         default = make_ik_angles(0, 0, 0, INIT_DEG_6, 0)
 
     print("\nIK 각도 입력. 엔터만 누르면 기본값을 사용합니다.")
-    print_pose_angles(
+    print__angles(
         "기본 IK 각도",
         default["deg1"],
         default["deg23"],
@@ -349,14 +349,14 @@ def move_sync_4_5(deg):
     pos4 = reverse_pos(logical_pos)
     last_deg_45 = deg
 
-    newServo.WritePosEx(ID_5, pos5, NEW_SPEED, NEW_ACC)
+    newServo.Writex(ID_5, pos5, NEW_SPEED, NEW_ACC)
     oldServo.WritePos(ID_4, pos4, OLD_TIME, OLD_SPEED)
 
 
 # ============================================================
 # 전체 축 이동 / 보간 이동
 # ============================================================
-def move_all_pose(deg1, deg23, deg45, deg6, deg7):
+def move_all_(deg1, deg23, deg45, deg6, deg7):
     move_single_1(deg1)
     move_sync_2_3(deg23)
     move_sync_4_5(deg45)
@@ -364,7 +364,7 @@ def move_all_pose(deg1, deg23, deg45, deg6, deg7):
     move_single_7(deg7)
 
 
-def smooth_move_all_pose(target_deg1, target_deg23, target_deg45, target_deg6, target_deg7):
+def smooth_move_all_(target_deg1, target_deg23, target_deg45, target_deg6, target_deg7):
     global last_deg_1, last_deg_23, last_deg_45, last_deg_6, last_deg_7
 
     start_deg1 = last_deg_1 if last_deg_1 is not None else target_deg1
@@ -382,41 +382,41 @@ def smooth_move_all_pose(target_deg1, target_deg23, target_deg45, target_deg6, t
         deg6 = start_deg6 + (target_deg6 - start_deg6) * ratio
         deg7 = start_deg7 + (target_deg7 - start_deg7) * ratio
 
-        move_all_pose(deg1, deg23, deg45, deg6, deg7)
+        move_all_(deg1, deg23, deg45, deg6, deg7)
         time.sleep(SMOOTH_DELAY)
 
 
 # ============================================================
 # 포즈 함수
 # ============================================================
-def pose_0_safety_check():
-    print("\n===== POSE 0 : SAFETY CHECK =====")
-    smooth_move_all_pose(0, 0, 0, 0, 0)
+def _0_safety_check():
+    print("\n=====  0 : SAFETY CHECK =====")
+    smooth_move_all_(0, 0, 0, 0, 0)
     time.sleep(0.5)
-    smooth_move_all_pose(10, 10, 10, 10, 10)
+    smooth_move_all_(10, 10, 10, 10, 10)
 
 
-def pose_1_base():
-    print("\n===== POSE 1 : BASE =====")
-    smooth_move_all_pose(0, 30, 0, 200, 0)
+def _1_base():
+    print("\n=====  1 : BASE =====")
+    smooth_move_all_(0, 30, 0, 200, 0)
 
 
-def pose_2_pick_ready():
-    print("\n===== POSE 2 : PICK READY =====")
-    smooth_move_all_pose(0, 0, 0, INIT_DEG_6, 0)
+def _2_pick_ready():
+    print("\n=====  2 : PICK READY =====")
+    smooth_move_all_(0, 0, 0, INIT_DEG_6, 0)
 
 
-def pose_3_go_to_place(min_deg=0, max_deg=90):
-    print("\n===== POSE 3 : GO TO PLACE TEST =====")
+def _3_go_to_place(min_deg=0, max_deg=90):
+    print("\n=====  3 : GO TO PLACE TEST =====")
 
     deg1 = 0
     deg23 = 60
-    deg45 = 10
+    deg45 = -20
     deg6 = 110
     deg7 = 0
 
-    print_pose_angles(
-        "POSE 3 : GO TO PLACE",
+    print__angles(
+        " 3 : GO TO PLACE",
         deg1,
         deg23,
         deg45,
@@ -424,7 +424,7 @@ def pose_3_go_to_place(min_deg=0, max_deg=90):
         deg7
     )
 
-    smooth_move_all_pose(
+    smooth_move_all_(
         deg1,
         deg23,
         deg45,
@@ -434,7 +434,7 @@ def pose_3_go_to_place(min_deg=0, max_deg=90):
 
 
 def act_pick(box_type="A_1", ik_angles=None):
-    print("\n===== POSE 4 : ACT_PICK =====")
+    print("\n=====  4 : ACT_PICK =====")
 
     if ik_angles is None:
         print("[오류] ACT_PICK는 IK 값이 필요합니다.")
@@ -571,11 +571,11 @@ def main():
             elif menu == "0":
                 pose_0_safety_check()
             elif menu == "1":
-                pose_1_base()
+                _1_base()
             elif menu == "2":
-                pose_2_pick_ready()
+                _2_pick_ready()
             elif menu == "3":
-                pose_3_go_to_place(0, 90)
+                _3_go_to_place(0, 90)
             elif menu == "4":
                 ik = input_ik_angles(
                     default=make_ik_angles(0, 20, 20, INIT_DEG_6, 0)
