@@ -4,35 +4,26 @@ from ikpy.chain import Chain
 
 class RobotIKController:
     """
-    robot_ik.py
+    논리각 중심 IK 모듈.
 
-    현재 실험 결과 반영 사항:
-    1. ArUco에서 받은 Pick XYZ 좌표를 IK 입력으로 사용
-    2. Pick Z 보정은 박스 종류별 오프셋으로 적용
-       - A_1, B_3: 15~17cm 범위 → 기본 160mm
-       - B_8: 21~23cm 범위 → 기본 220mm
-    3. Wrist(deg6)는 Elbow(deg45)의 변화량만 반영하여 보정
-       - Shoulder(deg23)는 Wrist 보정에서 제외
-    4. 손목 기준각은 110도
-    5. MOTOR_CONTROL.py는 수정하지 않고, IK 변환층에서만 방향/보정 처리
-    6. Pick IK에서는 Base(deg1)를 3번 포즈 기준값 0도로 고정
-    7. joints_to_motor_angles() 내부 0~220 clamp 제거
-       - 음수 각도 허용 관절(Base/Shoulder)을 위해 MOTOR_LIMITS에서만 검증
+    핵심 기준:
+    - IK/URDF 내부 각도 = 논리각
+    - 논리각 0도 = 실제 서보 입력 110도
+    - 최종 모터 입력값 = 110 + 논리각
+
+    따라서 MOTOR_CONTROL.py는 기존 0~220도 서보 입력 구조를 유지한다.
     """
 
-    URDF_PATH = "mybot_skeleton_g_pose_ik_final_limited.urdf"
-
+    URDF_PATH = "mybot_skeleton_logical_center.urdf"
     ACTIVE_MASK = [False, True, True, True, True, True]
 
     DEFAULT_ORIENTATION = [0, -1, 0]
     ORIENTATION_MODE = "Y"
 
-    # --------------------------------------------------------
-    # Pick Z Offset
-    # --------------------------------------------------------
-    # 기존 GRIPPER_TCP_LENGTH_MM는 실제로 "그리퍼 길이"라기보다
-    # 현재 좌표계에서 IK 기준점과 실제 흡착 목표점 사이의 Z 보정값으로 사용됨.
-    # 따라서 박스 종류별 Pick Z Offset으로 분리.
+    SERVO_CENTER_DEG = 110.0
+    SERVO_MIN_DEG = 0.0
+    SERVO_MAX_DEG = 220.0
+
     PICK_Z_OFFSET_BY_LABEL = {
         "A_1": 60.0,
         "B_3": 60.0,
@@ -40,37 +31,18 @@ class RobotIKController:
         "DEFAULT": 60.0,
     }
 
-    # 기존 코드 호환용 이름.
-    # 직접 사용하지 않고 get_pick_z_offset()을 통해 label별 값을 사용한다.
-    GRIPPER_TCP_LENGTH_MM = 160.0
+    GRIPPER_TCP_LENGTH_MM = 60.0
 
-    # --------------------------------------------------------
-    # Wrist / Gripper Leveling
-    # --------------------------------------------------------
-    WRIST_TCP_REFERENCE_DEG = 110.0
-    ENABLE_GRIPPER_LEVELING = True
-
-    # Elbow-only leveling:
-    # deg6 = 110 - ELBOW_LEVEL_GAIN * (deg45 - origin_deg45)
-    #
-    # 실제 동작에서 보정 방향이 반대면 -1.0으로 변경
-    # 보정량이 과하면 0.5, 부족하면 1.2 등으로 조정
-    ELBOW_LEVEL_GAIN = 1.0
-
-    SERVO_MIN_DEG = 0.0
-    SERVO_MAX_DEG = 220.0
-
-    # 실제 모터 논리각 제한.
-    # IK 결과가 이 범위를 벗어나면 MOTOR_CONTROL에서 조용히 clamp되기 전에 중단한다.
-    MOTOR_LIMITS = {
-        "deg1": (-180.0, 180.0),
+    # 논리각 제한.
+    # 실제 0~220 서보에서 center=110 기준으로 표현 가능한 범위만 사용한다.
+    LOGICAL_LIMITS = {
+        "deg1": (-110.0, 110.0),
         "deg23": (-90.0, 90.0),
         "deg45": (0.0, 110.0),
-        "deg6": (0.0, 220.0),
-        "deg7": (0.0, 220.0),
+        "deg6": (-110.0, 110.0),
+        "deg7": (-110.0, 110.0),
     }
 
-    # 사용자가 확인한 실제 +방향
     MOTOR_POSITIVE_DIRECTIONS = {
         "deg1": "반시계",
         "deg23": "앞으로",
@@ -79,48 +51,14 @@ class RobotIKController:
         "deg7": "반시계",
     }
 
-    # 조합 제한. 현재는 최소 안전형만 적용.
-    # 필요하면 실제 간섭 조건에 맞춰 값을 좁힌다.
-    COMBINED_LIMITS = {
-        # Shoulder와 Elbow 조합 제한. 실제 간섭 테스트 전까지 넓게 둔다.
-        "deg23_plus_deg45_max": 200.0,
-    }
-
-    SERVO_OFFSETS = {
-        "deg1": 90.0,
-        "deg23": 90.0,
-        "deg45": 90.0,
-        "deg6": 110.0,
-        "deg7": 110.0,
-    }
-
-    # 현재 프로젝트 기준 방향 보정
-    # Shoulder / Elbow 정상 판정값 유지
-    # Wrist는 apply_gripper_leveling()에서 최종 overwrite됨
+    # URDF raw joint +방향과 실제 논리각 +방향의 관계.
+    # Shoulder가 반대로 움직이면 deg23만 -1/1 조정.
     SERVO_DIRECTIONS = {
         "deg1": 1.0,
         "deg23": -1.0,
         "deg45": 1.0,
         "deg6": 1.0,
         "deg7": 1.0,
-    }
-
-    # 3번 Pose: Pick IK 기준 원점
-    PICK_ORIGIN_POSE_DEG = {
-        "deg1": 0.0,
-        "deg23": 60.0,
-        "deg45": 40.0,
-        "deg6": 110.0,
-        "deg7": 0.0,
-    }
-
-    # 6번 Pose: Place IK 기준 원점
-    PLACE_ORIGIN_POSE_DEG = {
-        "deg1": 90.0,
-        "deg23": 20.0,
-        "deg45": 20.0,
-        "deg6": 110.0,
-        "deg7": 0.0,
     }
 
     JOINT_INDEX_MAP = {
@@ -131,21 +69,21 @@ class RobotIKController:
         "deg7": 5,
     }
 
+    ENABLE_GRIPPER_LEVELING = True
+    ELBOW_LEVEL_GAIN = 1.0
+
     def __init__(self, urdf_path=None):
         self.urdf_path = urdf_path or self.URDF_PATH
-
         self.chain = Chain.from_urdf_file(
             self.urdf_path,
             active_links_mask=self.ACTIVE_MASK,
         )
 
-        print("\n[robot_ik] 초기화 완료")
-        print(f"[robot_ik] URDF_PATH         : {self.urdf_path}")
-        print(f"[robot_ik] SERVO_DIRECTIONS  : {self.SERVO_DIRECTIONS}")
-        print(f"[robot_ik] Pick Z Offsets    : {self.PICK_Z_OFFSET_BY_LABEL}")
-        print(f"[robot_ik] Wrist 기준각      : {self.WRIST_TCP_REFERENCE_DEG} deg")
-        print(f"[robot_ik] Wrist 보정 방식   : Elbow only")
-        print(f"[robot_ik] Elbow Gain        : {self.ELBOW_LEVEL_GAIN}")
+        print("\n[robot_ik] 논리각 중심 IK 초기화")
+        print(f"[robot_ik] URDF_PATH        : {self.urdf_path}")
+        print(f"[robot_ik] SERVO_CENTER     : {self.SERVO_CENTER_DEG} deg")
+        print(f"[robot_ik] SERVO_DIRECTIONS : {self.SERVO_DIRECTIONS}")
+        print(f"[robot_ik] Pick Z Offsets   : {self.PICK_Z_OFFSET_BY_LABEL}")
         self.print_limit_summary()
 
     @staticmethod
@@ -153,8 +91,13 @@ class RobotIKController:
         return max(min_v, min(max_v, value))
 
     @staticmethod
-    def rotate_xy_mm(x_mm, y_mm, base_deg):
-        theta = math.radians(-base_deg)
+    def rotate_xy_mm(x_mm, y_mm, base_servo_deg):
+        """
+        base_servo_deg는 실제 서보각.
+        내부 회전 계산에는 논리각으로 변환해서 사용한다.
+        """
+        base_logical_deg = base_servo_deg - RobotIKController.SERVO_CENTER_DEG
+        theta = math.radians(-base_logical_deg)
 
         local_x = x_mm * math.cos(theta) + y_mm * math.sin(theta)
         local_y = -x_mm * math.sin(theta) + y_mm * math.cos(theta)
@@ -183,36 +126,25 @@ class RobotIKController:
             initial_position=initial_joint_positions,
         )
 
-    def joints_to_motor_angles(self, joints, origin_pose_deg, debug=True):
+    def joints_to_logical_angles(self, joints, debug=True):
         """
-        raw joint -> motor logical angle 변환.
-
-        변환식:
-            raw_deg = degrees(joint_rad)
-            delta   = SERVO_DIRECTIONS[key] * raw_deg
-            result  = origin_pose_deg[key] + delta
+        IK raw joint(rad)를 논리각(deg)으로 변환한다.
+        아직 서보 110도 중심 변환은 하지 않는다.
         """
         if len(joints) < 6:
             raise ValueError(f"IK joints 길이 부족: {len(joints)}")
 
-        result = {}
+        logical = {}
 
         if debug:
-            print("\n[IK 변환 디버그]")
-            print("key | joint_idx | raw_deg | direction | origin | delta | result")
+            print("\n[IK raw -> logical 변환]")
+            print("key | joint_idx | raw_deg | direction | logical_deg")
 
         for key, joint_index in self.JOINT_INDEX_MAP.items():
             raw_deg = math.degrees(float(joints[joint_index]))
             direction = float(self.SERVO_DIRECTIONS[key])
-            origin = float(origin_pose_deg[key])
-
-            delta = direction * raw_deg
-            servo_deg = origin + delta
-
-            # 여기서 0~220 clamp를 적용하지 않는다.
-            # Base/Shoulder처럼 음수 각도가 허용되는 관절이 있기 때문이다.
-            # 제한 초과 여부는 validate_motor_limits()에서 검사한다.
-            result[key] = servo_deg
+            logical_deg = direction * raw_deg
+            logical[key] = logical_deg
 
             if debug:
                 print(
@@ -220,66 +152,77 @@ class RobotIKController:
                     f"{joint_index:^9d} | "
                     f"{raw_deg:7.2f} | "
                     f"{direction:9.1f} | "
-                    f"{origin:6.2f} | "
-                    f"{delta:7.2f} | "
-                    f"{servo_deg:7.2f}"
+                    f"{logical_deg:11.2f}"
                 )
 
-        return result
+        return logical
 
-    def apply_gripper_leveling(self, angles, origin_pose_deg, mode_name="PICK"):
+    def apply_gripper_leveling_logical(self, logical_angles, mode_name="PICK"):
         """
-        Elbow(deg45) 변화량만 Wrist(deg6)에 반영한다.
-
-        Shoulder 영향은 사용하지 않는다.
-
-        식:
-            elbow_delta = current_deg45 - origin_deg45
-            deg6 = WRIST_TCP_REFERENCE_DEG - ELBOW_LEVEL_GAIN * elbow_delta
+        논리각 기준 Wrist 보정.
+        Elbow 논리각이 증가하면 Wrist 논리각을 반대 방향으로 보정한다.
         """
         if not self.ENABLE_GRIPPER_LEVELING:
-            return angles
+            return logical_angles
 
-        leveled = dict(angles)
+        leveled = dict(logical_angles)
 
-        elbow_delta = leveled["deg45"] - origin_pose_deg["deg45"]
-        old_deg6 = leveled["deg6"]
+        elbow_logical = leveled["deg45"]
+        old_wrist = leveled["deg6"]
 
-        wrist_target = (
-            self.WRIST_TCP_REFERENCE_DEG
-            - self.ELBOW_LEVEL_GAIN * elbow_delta
-        )
+        wrist_logical = -self.ELBOW_LEVEL_GAIN * elbow_logical
 
-        wrist_target = self.clamp(
-            wrist_target,
-            self.SERVO_MIN_DEG,
-            self.SERVO_MAX_DEG,
-        )
+        min_v, max_v = self.LOGICAL_LIMITS["deg6"]
+        wrist_logical = self.clamp(wrist_logical, min_v, max_v)
 
-        leveled["deg6"] = wrist_target
+        leveled["deg6"] = wrist_logical
 
-        print("\n[Gripper Elbow-only Leveling]")
-        print(f"mode             : {mode_name}")
-        print(f"origin deg45     : {origin_pose_deg['deg45']:.2f} deg")
-        print(f"current deg45    : {angles['deg45']:.2f} deg")
-        print(f"elbow_delta      : {elbow_delta:.2f} deg")
-        print(f"old deg6         : {old_deg6:.2f} deg")
-        print(f"leveled deg6     : {wrist_target:.2f} deg")
-        print("[INFO] Wrist 보정에는 Elbow 변화량만 사용합니다.")
+        print("\n[Gripper Leveling - logical]")
+        print(f"mode              : {mode_name}")
+        print(f"elbow logical     : {elbow_logical:.2f} deg")
+        print(f"old wrist logical : {old_wrist:.2f} deg")
+        print(f"new wrist logical : {wrist_logical:.2f} deg")
 
         return leveled
 
+    def validate_logical_limits(self, logical_angles):
+        for key, (min_v, max_v) in self.LOGICAL_LIMITS.items():
+            if key not in logical_angles:
+                raise ValueError(f"{key} 누락")
+
+            value = float(logical_angles[key])
+
+            if not (min_v <= value <= max_v):
+                raise ValueError(
+                    f"{key} 논리각 제한 초과: {value:.2f} deg, "
+                    f"허용 범위: {min_v:.1f}~{max_v:.1f} deg"
+                )
+
+        return True
+
+    def logical_to_servo_angles(self, logical_angles):
+        """
+        논리각 -> 실제 MOTOR_CONTROL 입력 서보각.
+        모든 출력은 0~220도 범위여야 한다.
+        """
+        self.validate_logical_limits(logical_angles)
+
+        servo = {}
+
+        for key, logical_deg in logical_angles.items():
+            servo_deg = self.SERVO_CENTER_DEG + float(logical_deg)
+
+            if not (self.SERVO_MIN_DEG <= servo_deg <= self.SERVO_MAX_DEG):
+                raise ValueError(
+                    f"{key} 서보각 변환 범위 초과: {servo_deg:.2f} deg "
+                    f"(logical={logical_deg:.2f})"
+                )
+
+            servo[key] = servo_deg
+
+        return servo
+
     def calculate_pick_joints(self, pick_position_mm, label=None):
-        """
-        4번 ACT_PICK용 raw joints 계산.
-
-        입력:
-            pick_position_mm = [x_mm, y_mm, z_mm]
-            label = "A_1" / "B_3" / "B_8"
-
-        Pick Z 보정:
-            pick_z_mm = z_mm - PICK_Z_OFFSET_BY_LABEL[label]
-        """
         x_mm, y_mm, z_mm = map(float, pick_position_mm)
 
         pick_z_offset_mm = self.get_pick_z_offset(label)
@@ -294,14 +237,11 @@ class RobotIKController:
             pick_z_mm / 1000.0,
         ]
 
-        print("\n[IK] PICK IK 계산")
-        print("[IK] 기준 원점        : 3번 포즈 결과값")
-        print(f"[IK] 3번 기준 포즈    : {self.PICK_ORIGIN_POSE_DEG}")
-        print(f"[IK] Box label        : {label}")
-        print(f"[IK] Pick 원본 mm     : [{x_mm:.1f}, {y_mm:.1f}, {z_mm:.1f}]")
-        print(f"[IK] Pick Z Offset    : -{pick_z_offset_mm:.1f} mm")
-        print(f"[IK] Pick 보정 후 mm  : [{x_mm:.1f}, {y_mm:.1f}, {pick_z_mm:.1f}]")
-        print(f"[IK] target_position_m: {target_position_m}")
+        print("\n[IK] PICK 계산")
+        print(f"[IK] Box label       : {label}")
+        print(f"[IK] Pick 원본 mm    : [{x_mm:.1f}, {y_mm:.1f}, {z_mm:.1f}]")
+        print(f"[IK] Pick Z Offset   : -{pick_z_offset_mm:.1f} mm")
+        print(f"[IK] Pick 보정 후 mm : [{x_mm:.1f}, {y_mm:.1f}, {pick_z_mm:.1f}]")
 
         return self.calculate_ik_core(target_position_m)
 
@@ -311,50 +251,38 @@ class RobotIKController:
             label=label,
         )
 
-        angles = self.joints_to_motor_angles(
+        logical = self.joints_to_logical_angles(
             joints,
-            self.PICK_ORIGIN_POSE_DEG,
             debug=True,
         )
 
-        angles = self.apply_gripper_leveling(
-            angles,
-            self.PICK_ORIGIN_POSE_DEG,
+        logical = self.apply_gripper_leveling_logical(
+            logical,
             mode_name="PICK",
         )
 
-        # Pick 동작에서는 Base가 움직이지 않도록 고정한다.
-        # 3번 포즈 기준 deg1 = 0.0을 유지.
-        old_deg1 = angles["deg1"]
-        angles["deg1"] = self.PICK_ORIGIN_POSE_DEG["deg1"]
+        # Pick에서는 Base 이동 금지.
+        logical["deg1"] = 0.0
 
-        print("\n[Pick Base Lock]")
-        print(f"old deg1    : {old_deg1:.2f} deg")
-        print(f"locked deg1 : {angles['deg1']:.2f} deg")
-        print("[INFO] Pick IK에서는 Base 신호를 고정합니다.")
+        servo_angles = self.logical_to_servo_angles(logical)
 
-        self.validate_motor_limits(angles)
+        print("\n[IK] PICK 최종 서보각")
+        self.print_motor_angles(servo_angles)
 
-        print("\n[IK] PICK 모터 각도")
-        self.print_motor_angles(angles)
-
-        return angles
+        return servo_angles
 
     def calculate_place_joints(self, load_position_mm, place_origin_pose_deg=None):
-        """
-        7번 ACT_PLACE용 raw joints 계산.
-        Place는 현재 Pick Z Offset을 적용하지 않는다.
-        """
-        if place_origin_pose_deg is None:
-            place_origin_pose_deg = self.PLACE_ORIGIN_POSE_DEG
-
         x_mm, y_mm, z_mm = map(float, load_position_mm)
-        base_deg = float(place_origin_pose_deg["deg1"])
+
+        if place_origin_pose_deg is None:
+            base_servo_deg = self.SERVO_CENTER_DEG
+        else:
+            base_servo_deg = float(place_origin_pose_deg["deg1"])
 
         local_x_mm, local_y_mm = self.rotate_xy_mm(
             x_mm,
             y_mm,
-            base_deg,
+            base_servo_deg,
         )
 
         target_position_m = [
@@ -363,43 +291,35 @@ class RobotIKController:
             z_mm / 1000.0,
         ]
 
-        print("\n[IK] PLACE IK 계산")
-        print("[IK] 기준 원점          : 6번 포즈 회전 후 결과값")
-        print(f"[IK] 6번 기준 포즈      : {place_origin_pose_deg}")
+        print("\n[IK] PLACE 계산")
         print(f"[IK] 원본 Load 좌표 mm  : [{x_mm:.1f}, {y_mm:.1f}, {z_mm:.1f}]")
-        print(f"[IK] Base 기준 회전각   : {base_deg:.1f}°")
+        print(f"[IK] Base servo deg     : {base_servo_deg:.1f}")
         print(f"[IK] 변환 Place 좌표 mm : [{local_x_mm:.1f}, {local_y_mm:.1f}, {z_mm:.1f}]")
-        print(f"[IK] target_position_m  : {target_position_m}")
 
         return self.calculate_ik_core(target_position_m)
 
     def calculate_place_ik(self, load_position_mm, place_origin_pose_deg=None):
-        if place_origin_pose_deg is None:
-            place_origin_pose_deg = self.PLACE_ORIGIN_POSE_DEG
-
         joints = self.calculate_place_joints(
             load_position_mm,
             place_origin_pose_deg=place_origin_pose_deg,
         )
 
-        angles = self.joints_to_motor_angles(
+        logical = self.joints_to_logical_angles(
             joints,
-            place_origin_pose_deg,
             debug=True,
         )
 
-        angles = self.apply_gripper_leveling(
-            angles,
-            place_origin_pose_deg,
+        logical = self.apply_gripper_leveling_logical(
+            logical,
             mode_name="PLACE",
         )
 
-        self.validate_motor_limits(angles)
+        servo_angles = self.logical_to_servo_angles(logical)
 
-        print("\n[IK] PLACE 모터 각도")
-        self.print_motor_angles(angles)
+        print("\n[IK] PLACE 최종 서보각")
+        self.print_motor_angles(servo_angles)
 
-        return angles
+        return servo_angles
 
     def verify_fk(self, joints):
         computed_matrix = self.chain.forward_kinematics(joints)
@@ -407,71 +327,32 @@ class RobotIKController:
 
     def validate_output_range(self, angles):
         """
-        기존 코드 호환용 함수.
-        이제 0~220 단순 제한이 아니라 MOTOR_LIMITS 기준으로 검사한다.
+        기존 호환용.
+        입력 angles는 최종 서보각 기준이다.
         """
-        return self.validate_motor_limits(angles)
-
-    def validate_motor_limits(self, angles):
-        """
-        IK 결과가 실제 모터 제한과 조합 제한을 만족하는지 검사한다.
-        """
-        for key, (min_v, max_v) in self.MOTOR_LIMITS.items():
-            if key not in angles:
-                raise ValueError(f"{key} 누락")
-
-            value = float(angles[key])
-
-            if not (min_v <= value <= max_v):
-                raise ValueError(
-                    f"{key} 관절 제한 초과: {value:.2f} deg, "
-                    f"허용 범위: {min_v:.1f}~{max_v:.1f} deg"
-                )
-
-        pair_sum = float(angles["deg23"]) + float(angles["deg45"])
-        max_sum = self.COMBINED_LIMITS["deg23_plus_deg45_max"]
-
-        if pair_sum > max_sum:
-            raise ValueError(
-                f"deg23+deg45 조합 제한 초과: {pair_sum:.2f} deg, "
-                f"허용 최대: {max_sum:.1f} deg"
-            )
-
+        for key, value in angles.items():
+            if not (self.SERVO_MIN_DEG <= float(value) <= self.SERVO_MAX_DEG):
+                raise ValueError(f"{key} 서보각 범위 초과: {value}")
         return True
 
     def print_limit_summary(self):
-        print("\n[IK 관절 제한]")
-        for key, limit in self.MOTOR_LIMITS.items():
+        print("\n[논리각 제한]")
+        for key, limit in self.LOGICAL_LIMITS.items():
             direction = self.MOTOR_POSITIVE_DIRECTIONS.get(key, "")
             print(f"{key:5s}: {limit[0]:.1f} ~ {limit[1]:.1f} deg / +방향: {direction}")
-
 
     @staticmethod
     def print_motor_angles(angles):
         print(f"deg1  Base              : {angles['deg1']:.2f} deg")
         print(f"deg23 Shoulder Pair     : {angles['deg23']:.2f} deg")
         print(f"deg45 Elbow Pair        : {angles['deg45']:.2f} deg")
-        print(f"deg6  Wrist Elbow-only  : {angles['deg6']:.2f} deg")
+        print(f"deg6  Wrist             : {angles['deg6']:.2f} deg")
         print(f"deg7  Gripper Rotation  : {angles['deg7']:.2f} deg")
 
 
 if __name__ == "__main__":
-    ik = RobotIKController("mybot_skeleton_g_pose_ik_final_limited.urdf")
+    ik = RobotIKController("mybot_skeleton_logical_center.urdf")
 
-    pick_a1 = ik.calculate_pick_ik([120, 80, 150], label="A_1")
-    ik.validate_output_range(pick_a1)
-
-    pick_b8 = ik.calculate_pick_ik([120, 80, 230], label="B_8")
-    ik.validate_output_range(pick_b8)
-
-    place = ik.calculate_place_ik([200, 100, 80])
-    ik.validate_output_range(place)
-
-    print("\n[PICK A_1 IK dict]")
-    print(pick_a1)
-
-    print("\n[PICK B_8 IK dict]")
-    print(pick_b8)
-
-    print("\n[PLACE IK dict]")
-    print(place)
+    pick = ik.calculate_pick_ik([150, 0, 250], label="A_1")
+    print("\n[PICK IK dict]")
+    print(pick)
