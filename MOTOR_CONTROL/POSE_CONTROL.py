@@ -411,7 +411,7 @@ def _3_go_to_place(min_deg=0, max_deg=90):
 
     deg1 = 0
     deg23 = 60
-    deg45 = -20
+    deg45 = -5
     deg6 = 110
     deg7 = 0
 
