@@ -350,7 +350,7 @@ def move_sync_4_5(deg):
     pos4 = reverse_pos(logical_pos)
     last_deg_45 = deg
 
-    newServo.Writex(ID_5, pos5, NEW_SPEED, NEW_ACC)
+    newServo.WriPostex(ID_5, pos5, NEW_SPEED, NEW_ACC)
     oldServo.WritePos(ID_4, pos4, OLD_TIME, OLD_SPEED)
 
 
