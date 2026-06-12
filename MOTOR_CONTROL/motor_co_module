@@ -473,7 +473,7 @@ class RobotArm:
 
     def pose_6_place_origin(self):
         print("\n===== POSE 6 : PLACE IK ORIGIN =====")
-        self.smooth_move_all_pose(45, 20, 20, INIT_DEG_6, 0)
+        self.smooth_move_all_pose(90, 20, 20, INIT_DEG_6, 0)
 
     def act_pick(self, box_type="A_1", ik_angles=None):
         print("\n===== POSE 4 : ACT_PICK =====")
