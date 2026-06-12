@@ -409,29 +409,8 @@ def _2_pick_ready():
 
 def _3_go_to_place(min_deg=0, max_deg=90):
     print("\n=====  3 : GO TO PLACE TEST =====")
+    smooth_move_all_(0, 60, 0, INIT_DEG_6, 0)
 
-    deg1 = 0
-    deg23 = 60
-    deg45 = -5
-    deg6 = 110
-    deg7 = 0
-
-    print__angles(
-        " 3 : GO TO PLACE",
-        deg1,
-        deg23,
-        deg45,
-        deg6,
-        deg7
-    )
-
-    smooth_move_all_(
-        deg1,
-        deg23,
-        deg45,
-        deg6,
-        deg7
-    )
 
 
 def act_pick(box_type="A_1", ik_angles=None):
