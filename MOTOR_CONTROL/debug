@@ -450,7 +450,7 @@ class RobotArm:
 
     def pose_3_go_to_place(self):
         print("\n===== POSE 3 : GO TO PLACE =====")
-        self.smooth_move_all_pose(0, 30, 90, INIT_DEG_6, 0)
+        self.smooth_move_all_pose(0, 60, 40, INIT_DEG_6, 0)
 
     def pose_5_rotation(self, target_deg1=45):
         print("\n===== POSE 5 : ROTATION MODE =====")
