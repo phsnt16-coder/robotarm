@@ -398,7 +398,7 @@ def pose_0_safety_check():
 
 def pose_1_base():
     print("\n===== POSE 1 : BASE =====")
-    smooth_move_all_pose(0, 30, 0, 220, 0)
+    smooth_move_all_pose(0, 30, 0, 200, 0)
 
 
 def pose_2_pick_ready():
