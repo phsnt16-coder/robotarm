@@ -409,14 +409,28 @@ def pose_2_pick_ready():
 def pose_3_go_to_place(min_deg=0, max_deg=90):
     print("\n===== POSE 3 : GO TO PLACE TEST =====")
 
-    deg1 = random.uniform(min_deg, max_deg)
-    deg23 = random.uniform(min_deg, max_deg)
-    deg45 = random.uniform(min_deg, max_deg)
-    deg6 = random.uniform(min_deg, max_deg)
-    deg7 = random.uniform(min_deg, max_deg)
+    deg1 = 0
+    deg23 = 60
+    deg45 = 0
+    deg6 = 110
+    deg7 = 0
 
-    print_pose_angles("랜덤 테스트 각도", deg1, deg23, deg45, deg6, deg7)
-    smooth_move_all_pose(deg1, deg23, deg45, deg6, deg7)
+    print_pose_angles(
+        "POSE 3 : GO TO PLACE",
+        deg1,
+        deg23,
+        deg45,
+        deg6,
+        deg7
+    )
+
+    smooth_move_all_pose(
+        deg1,
+        deg23,
+        deg45,
+        deg6,
+        deg7
+    )
 
 
 def act_pick(box_type="A_1", ik_angles=None):
