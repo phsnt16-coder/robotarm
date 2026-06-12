@@ -1,3 +1,4 @@
+#TypeError: RobotIKController.calculate_pick_joints() got an unexpected keyword argument 'label'
 import os
 import numpy as np
 import matplotlib
