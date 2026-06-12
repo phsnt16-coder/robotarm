@@ -18,7 +18,7 @@ class RobotIKController:
     6. Pick IK에서는 Base(deg1)를 3번 포즈 기준값 0도로 고정
     """
 
-    URDF_PATH = "mybot_skeleton_g_pose_ik.urdf"
+    URDF_PATH = "mybot_skeleton_g_pose_ik_final_limited.urdf"
 
     ACTIVE_MASK = [False, True, True, True, True, True]
 
@@ -32,10 +32,10 @@ class RobotIKController:
     # 현재 좌표계에서 IK 기준점과 실제 흡착 목표점 사이의 Z 보정값으로 사용됨.
     # 따라서 박스 종류별 Pick Z Offset으로 분리.
     PICK_Z_OFFSET_BY_LABEL = {
-        "A_1": 160.0,
-        "B_3": 160.0,
-        "B_8": 220.0,
-        "DEFAULT": 160.0,
+        "A_1": 60.0,
+        "B_3": 60.0,
+        "B_8": 120.0,
+        "DEFAULT": 60.0,
     }
 
     # 기존 코드 호환용 이름.
@@ -57,6 +57,32 @@ class RobotIKController:
 
     SERVO_MIN_DEG = 0.0
     SERVO_MAX_DEG = 220.0
+
+    # 실제 모터 논리각 제한.
+    # IK 결과가 이 범위를 벗어나면 MOTOR_CONTROL에서 조용히 clamp되기 전에 중단한다.
+    MOTOR_LIMITS = {
+        "deg1": (-180.0, 180.0),
+        "deg23": (-90.0, 90.0),
+        "deg45": (0.0, 110.0),
+        "deg6": (0.0, 220.0),
+        "deg7": (0.0, 220.0),
+    }
+
+    # 사용자가 확인한 실제 +방향
+    MOTOR_POSITIVE_DIRECTIONS = {
+        "deg1": "반시계",
+        "deg23": "앞으로",
+        "deg45": "접힘",
+        "deg6": "아래",
+        "deg7": "반시계",
+    }
+
+    # 조합 제한. 현재는 최소 안전형만 적용.
+    # 필요하면 실제 간섭 조건에 맞춰 값을 좁힌다.
+    COMBINED_LIMITS = {
+        # Shoulder와 Elbow 조합 제한. 실제 간섭 테스트 전까지 넓게 둔다.
+        "deg23_plus_deg45_max": 200.0,
+    }
 
     SERVO_OFFSETS = {
         "deg1": 90.0,
@@ -118,6 +144,7 @@ class RobotIKController:
         print(f"[robot_ik] Wrist 기준각      : {self.WRIST_TCP_REFERENCE_DEG} deg")
         print(f"[robot_ik] Wrist 보정 방식   : Elbow only")
         print(f"[robot_ik] Elbow Gain        : {self.ELBOW_LEVEL_GAIN}")
+        self.print_limit_summary()
 
     @staticmethod
     def clamp(value, min_v, max_v):
@@ -307,6 +334,8 @@ class RobotIKController:
         print(f"locked deg1 : {angles['deg1']:.2f} deg")
         print("[INFO] Pick IK에서는 Base 신호를 고정합니다.")
 
+        self.validate_motor_limits(angles)
+
         print("\n[IK] PICK 모터 각도")
         self.print_motor_angles(angles)
 
@@ -366,6 +395,8 @@ class RobotIKController:
             mode_name="PLACE",
         )
 
+        self.validate_motor_limits(angles)
+
         print("\n[IK] PLACE 모터 각도")
         self.print_motor_angles(angles)
 
@@ -381,6 +412,40 @@ class RobotIKController:
                 raise ValueError(f"{key} 범위 초과: {value}")
         return True
 
+    def validate_motor_limits(self, angles):
+        """
+        IK 결과가 실제 모터 제한과 조합 제한을 만족하는지 검사한다.
+        """
+        for key, (min_v, max_v) in self.MOTOR_LIMITS.items():
+            if key not in angles:
+                raise ValueError(f"{key} 누락")
+
+            value = float(angles[key])
+
+            if not (min_v <= value <= max_v):
+                raise ValueError(
+                    f"{key} 관절 제한 초과: {value:.2f} deg, "
+                    f"허용 범위: {min_v:.1f}~{max_v:.1f} deg"
+                )
+
+        pair_sum = float(angles["deg23"]) + float(angles["deg45"])
+        max_sum = self.COMBINED_LIMITS["deg23_plus_deg45_max"]
+
+        if pair_sum > max_sum:
+            raise ValueError(
+                f"deg23+deg45 조합 제한 초과: {pair_sum:.2f} deg, "
+                f"허용 최대: {max_sum:.1f} deg"
+            )
+
+        return True
+
+    def print_limit_summary(self):
+        print("\n[IK 관절 제한]")
+        for key, limit in self.MOTOR_LIMITS.items():
+            direction = self.MOTOR_POSITIVE_DIRECTIONS.get(key, "")
+            print(f"{key:5s}: {limit[0]:.1f} ~ {limit[1]:.1f} deg / +방향: {direction}")
+
+
     @staticmethod
     def print_motor_angles(angles):
         print(f"deg1  Base              : {angles['deg1']:.2f} deg")
@@ -391,7 +456,7 @@ class RobotIKController:
 
 
 if __name__ == "__main__":
-    ik = RobotIKController("mybot_skeleton_g_pose_ik.urdf")
+    ik = RobotIKController("mybot_skeleton_g_pose_ik_final_limited.urdf")
 
     pick_a1 = ik.calculate_pick_ik([120, 80, 150], label="A_1")
     ik.validate_output_range(pick_a1)
