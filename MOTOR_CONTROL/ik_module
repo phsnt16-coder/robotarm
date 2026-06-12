@@ -7,10 +7,10 @@ class RobotIKController:
     motor_controller 기준 IK 변환 모듈.
 
     적용 사항:
-    - SERVO_DIRECTIONS 변경이 최종 motor_angles에 직접 반영되는 변환층 사용
-    - 기존 TCP 보정값 적용
-    - Pick IK: z_mm - GRIPPER_TCP_LENGTH_MM
-    - Place IK: Load 좌표 기준, 6번 포즈 Base 기준 좌표 변환
+    - TCP 보정 적용
+    - SERVO_DIRECTIONS 기반 각도 변환
+    - Shoulder / Elbow 회전량을 고려해 Wrist(deg6)를 자동 보정
+    - 목적: 그리퍼가 박스 상면과 수평에 가깝게 유지되도록 함
     """
 
     URDF_PATH = "mybot.urdf"
@@ -20,8 +20,19 @@ class RobotIKController:
     DEFAULT_ORIENTATION = [0, -1, 0]
     ORIENTATION_MODE = "Y"
 
-    # 기존 TCP 보정값 복구
-    GRIPPER_TCP_LENGTH_MM = 0.0
+    # 실제 흡착패드 끝단 보정 길이
+    GRIPPER_TCP_LENGTH_MM = 80.0
+
+    # 흡착패드가 정확히 바닥을 향하는 손목 기준각
+    WRIST_TCP_REFERENCE_DEG = 110.0
+
+    # 그리퍼 수평 유지 보정 사용 여부
+    ENABLE_GRIPPER_LEVELING = True
+
+    # Shoulder / Elbow가 손목 자세에 미치는 영향 계수
+    # 실제 방향이 반대로 보이면 해당 계수 부호만 바꾸면 됨
+    SHOULDER_LEVEL_GAIN = 1.0
+    ELBOW_LEVEL_GAIN = 1.0
 
     SERVO_MIN_DEG = 0.0
     SERVO_MAX_DEG = 220.0
@@ -34,8 +45,9 @@ class RobotIKController:
         "deg7": 110.0,
     }
 
-    # 정상 동작 확인된 변환층 기준.
-    # 실제 방향이 반대로 나오면 이 값만 수정.
+    # 현재 프로젝트 기준 방향 보정
+    # Shoulder / Elbow는 현재 정상 판정값 유지
+    # Wrist 방향은 IK 변환층에서만 조정
     SERVO_DIRECTIONS = {
         "deg1": 1.0,
         "deg23": -1.0,
@@ -80,6 +92,8 @@ class RobotIKController:
         print(f"[robot_ik] URDF_PATH        : {self.urdf_path}")
         print(f"[robot_ik] SERVO_DIRECTIONS : {self.SERVO_DIRECTIONS}")
         print(f"[robot_ik] TCP 보정값       : {self.GRIPPER_TCP_LENGTH_MM} mm")
+        print(f"[robot_ik] Wrist 기준각     : {self.WRIST_TCP_REFERENCE_DEG} deg")
+        print(f"[robot_ik] Gripper Leveling : {self.ENABLE_GRIPPER_LEVELING}")
 
     @staticmethod
     def clamp(value, min_v, max_v):
@@ -106,13 +120,12 @@ class RobotIKController:
 
     def joints_to_motor_angles(self, joints, origin_pose_deg, debug=True):
         """
-        변환식:
+        raw joint -> motor logical angle 변환.
 
+        변환식:
             raw_deg = degrees(joint_rad)
             delta   = SERVO_DIRECTIONS[key] * raw_deg
             result  = origin_pose_deg[key] + delta
-
-        따라서 SERVO_DIRECTIONS를 바꾸면 최종 motor_angles가 직접 바뀐다.
         """
         if len(joints) < 6:
             raise ValueError(f"IK joints 길이 부족: {len(joints)}")
@@ -152,12 +165,60 @@ class RobotIKController:
 
         return result
 
+    def apply_gripper_leveling(self, angles, origin_pose_deg, mode_name="PICK"):
+        """
+        Shoulder와 Elbow 회전량을 고려하여 Wrist(deg6)를 자동 보정.
+
+        목적:
+            - Shoulder/Elbow가 움직여도 그리퍼가 박스 상면과 수평에 가깝게 유지
+            - 흡착패드가 바닥 방향을 유지
+
+        기본식:
+            shoulder_delta = deg23 - origin_deg23
+            elbow_delta    = deg45 - origin_deg45
+
+            deg6 = WRIST_TCP_REFERENCE_DEG
+                   - SHOULDER_LEVEL_GAIN * shoulder_delta
+                   - ELBOW_LEVEL_GAIN * elbow_delta
+
+        주의:
+            실제 로봇에서 보정 방향이 반대면
+            SHOULDER_LEVEL_GAIN 또는 ELBOW_LEVEL_GAIN의 부호를 바꾸면 됨.
+        """
+        if not self.ENABLE_GRIPPER_LEVELING:
+            return angles
+
+        leveled = dict(angles)
+
+        shoulder_delta = leveled["deg23"] - origin_pose_deg["deg23"]
+        elbow_delta = leveled["deg45"] - origin_pose_deg["deg45"]
+
+        wrist_target = (
+            self.WRIST_TCP_REFERENCE_DEG
+            - self.SHOULDER_LEVEL_GAIN * shoulder_delta
+            - self.ELBOW_LEVEL_GAIN * elbow_delta
+        )
+
+        wrist_target = self.clamp(
+            wrist_target,
+            self.SERVO_MIN_DEG,
+            self.SERVO_MAX_DEG,
+        )
+
+        print("\n[Gripper Leveling]")
+        print(f"mode             : {mode_name}")
+        print(f"shoulder_delta   : {shoulder_delta:.2f} deg")
+        print(f"elbow_delta      : {elbow_delta:.2f} deg")
+        print(f"old deg6         : {leveled['deg6']:.2f} deg")
+        print(f"leveled deg6     : {wrist_target:.2f} deg")
+
+        leveled["deg6"] = wrist_target
+
+        return leveled
+
     def calculate_pick_joints(self, pick_position_mm):
         """
         4번 ACT_PICK용 raw joints 계산.
-
-        입력 좌표:
-            [x_mm, y_mm, z_mm]
 
         TCP 보정:
             pick_z_mm = z_mm - GRIPPER_TCP_LENGTH_MM
@@ -192,6 +253,12 @@ class RobotIKController:
             joints,
             self.PICK_ORIGIN_POSE_DEG,
             debug=True,
+        )
+
+        angles = self.apply_gripper_leveling(
+            angles,
+            self.PICK_ORIGIN_POSE_DEG,
+            mode_name="PICK",
         )
 
         print("\n[IK] PICK 모터 각도")
@@ -247,6 +314,12 @@ class RobotIKController:
             debug=True,
         )
 
+        angles = self.apply_gripper_leveling(
+            angles,
+            place_origin_pose_deg,
+            mode_name="PLACE",
+        )
+
         print("\n[IK] PLACE 모터 각도")
         self.print_motor_angles(angles)
 
@@ -267,7 +340,7 @@ class RobotIKController:
         print(f"deg1  Base              : {angles['deg1']:.2f} deg")
         print(f"deg23 Shoulder Pair     : {angles['deg23']:.2f} deg")
         print(f"deg45 Elbow Pair        : {angles['deg45']:.2f} deg")
-        print(f"deg6  Wrist             : {angles['deg6']:.2f} deg")
+        print(f"deg6  Wrist Leveling    : {angles['deg6']:.2f} deg")
         print(f"deg7  Gripper Rotation  : {angles['deg7']:.2f} deg")
 
 
