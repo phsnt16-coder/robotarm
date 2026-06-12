@@ -21,7 +21,7 @@ class RobotIKController:
     ORIENTATION_MODE = "Y"
 
     # 기존 TCP 보정값 복구
-    GRIPPER_TCP_LENGTH_MM = 30.0
+    GRIPPER_TCP_LENGTH_MM = 0.0
 
     SERVO_MIN_DEG = 0.0
     SERVO_MAX_DEG = 220.0
