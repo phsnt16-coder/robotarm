@@ -16,6 +16,8 @@ class RobotIKController:
     4. 손목 기준각은 110도
     5. MOTOR_CONTROL.py는 수정하지 않고, IK 변환층에서만 방향/보정 처리
     6. Pick IK에서는 Base(deg1)를 3번 포즈 기준값 0도로 고정
+    7. joints_to_motor_angles() 내부 0~220 clamp 제거
+       - 음수 각도 허용 관절(Base/Shoulder)을 위해 MOTOR_LIMITS에서만 검증
     """
 
     URDF_PATH = "mybot_skeleton_g_pose_ik_final_limited.urdf"
@@ -207,12 +209,9 @@ class RobotIKController:
             delta = direction * raw_deg
             servo_deg = origin + delta
 
-            servo_deg = self.clamp(
-                servo_deg,
-                self.SERVO_MIN_DEG,
-                self.SERVO_MAX_DEG,
-            )
-
+            # 여기서 0~220 clamp를 적용하지 않는다.
+            # Base/Shoulder처럼 음수 각도가 허용되는 관절이 있기 때문이다.
+            # 제한 초과 여부는 validate_motor_limits()에서 검사한다.
             result[key] = servo_deg
 
             if debug:
@@ -407,10 +406,11 @@ class RobotIKController:
         return computed_matrix[:3, 3].tolist()
 
     def validate_output_range(self, angles):
-        for key, value in angles.items():
-            if not (self.SERVO_MIN_DEG <= value <= self.SERVO_MAX_DEG):
-                raise ValueError(f"{key} 범위 초과: {value}")
-        return True
+        """
+        기존 코드 호환용 함수.
+        이제 0~220 단순 제한이 아니라 MOTOR_LIMITS 기준으로 검사한다.
+        """
+        return self.validate_motor_limits(angles)
 
     def validate_motor_limits(self, angles):
         """
