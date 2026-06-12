@@ -18,7 +18,7 @@ class RobotIKController:
     6. Pick IK에서는 Base(deg1)를 3번 포즈 기준값 0도로 고정
     """
 
-    URDF_PATH = "mybot.urdf"
+    URDF_PATH = "mybot_skeleton_g_pose_ik.urdf"
 
     ACTIVE_MASK = [False, True, True, True, True, True]
 
@@ -391,7 +391,7 @@ class RobotIKController:
 
 
 if __name__ == "__main__":
-    ik = RobotIKController("mybot.urdf")
+    ik = RobotIKController("mybot_skeleton_g_pose_ik.urdf")
 
     pick_a1 = ik.calculate_pick_ik([120, 80, 150], label="A_1")
     ik.validate_output_range(pick_a1)
