@@ -4,21 +4,18 @@ from ikpy.chain import Chain
 
 class RobotIKController:
     """
-    motor_controller 기준 IK 변환 모듈.
+    robot_ik.py
 
-    목적:
-    - Pick / Place IK 결과를 MOTOR_CONTROL.py에 바로 넣을 수 있는 각도 dict로 변환
-    - TCP 보정 적용
-    - Wrist(deg6)는 Elbow(deg45)의 변화량만 반영하여 보정
-    - 이전 Shoulder 보정값이 남지 않도록 Shoulder는 deg6 계산에서 완전히 제외
-
-    핵심 Wrist 보정식:
-        elbow_delta = deg45 - origin_deg45
-        deg6 = 110.0 - elbow_delta
-
-    즉:
-        - Shoulder(deg23) 변화량은 Wrist 보정에 사용하지 않음
-        - Elbow(deg45) 변화량만 Wrist(deg6)에 반대로 반영
+    현재 실험 결과 반영 사항:
+    1. ArUco에서 받은 Pick XYZ 좌표를 IK 입력으로 사용
+    2. Pick Z 보정은 박스 종류별 오프셋으로 적용
+       - A_1, B_3: 15~17cm 범위 → 기본 160mm
+       - B_8: 21~23cm 범위 → 기본 220mm
+    3. Wrist(deg6)는 Elbow(deg45)의 변화량만 반영하여 보정
+       - Shoulder(deg23)는 Wrist 보정에서 제외
+    4. 손목 기준각은 110도
+    5. MOTOR_CONTROL.py는 수정하지 않고, IK 변환층에서만 방향/보정 처리
+    6. Pick IK에서는 Base(deg1)를 3번 포즈 기준값 0도로 고정
     """
 
     URDF_PATH = "mybot.urdf"
@@ -28,18 +25,33 @@ class RobotIKController:
     DEFAULT_ORIENTATION = [0, -1, 0]
     ORIENTATION_MODE = "Y"
 
-    # TCP 보정값
-    GRIPPER_TCP_LENGTH_MM = -220.0
+    # --------------------------------------------------------
+    # Pick Z Offset
+    # --------------------------------------------------------
+    # 기존 GRIPPER_TCP_LENGTH_MM는 실제로 "그리퍼 길이"라기보다
+    # 현재 좌표계에서 IK 기준점과 실제 흡착 목표점 사이의 Z 보정값으로 사용됨.
+    # 따라서 박스 종류별 Pick Z Offset으로 분리.
+    PICK_Z_OFFSET_BY_LABEL = {
+        "A_1": 160.0,
+        "B_3": 160.0,
+        "B_8": 220.0,
+        "DEFAULT": 160.0,
+    }
 
-    # 흡착패드가 바닥을 향하는 Wrist 기준각
+    # 기존 코드 호환용 이름.
+    # 직접 사용하지 않고 get_pick_z_offset()을 통해 label별 값을 사용한다.
+    GRIPPER_TCP_LENGTH_MM = 160.0
+
+    # --------------------------------------------------------
+    # Wrist / Gripper Leveling
+    # --------------------------------------------------------
     WRIST_TCP_REFERENCE_DEG = 110.0
-
-    # Elbow 기반 Wrist 보정 사용
     ENABLE_GRIPPER_LEVELING = True
 
-    # Elbow 보정 계수
-    # 기본식: deg6 = 110 - ELBOW_LEVEL_GAIN * elbow_delta
-    # 방향이 반대면 -1.0으로 변경
+    # Elbow-only leveling:
+    # deg6 = 110 - ELBOW_LEVEL_GAIN * (deg45 - origin_deg45)
+    #
+    # 실제 동작에서 보정 방향이 반대면 -1.0으로 변경
     # 보정량이 과하면 0.5, 부족하면 1.2 등으로 조정
     ELBOW_LEVEL_GAIN = 1.0
 
@@ -56,7 +68,7 @@ class RobotIKController:
 
     # 현재 프로젝트 기준 방향 보정
     # Shoulder / Elbow 정상 판정값 유지
-    # Wrist는 아래 apply_gripper_leveling()에서 최종 overwrite됨
+    # Wrist는 apply_gripper_leveling()에서 최종 overwrite됨
     SERVO_DIRECTIONS = {
         "deg1": 1.0,
         "deg23": -1.0,
@@ -65,6 +77,7 @@ class RobotIKController:
         "deg7": 1.0,
     }
 
+    # 3번 Pose: Pick IK 기준 원점
     PICK_ORIGIN_POSE_DEG = {
         "deg1": 0.0,
         "deg23": 60.0,
@@ -73,6 +86,7 @@ class RobotIKController:
         "deg7": 0.0,
     }
 
+    # 6번 Pose: Place IK 기준 원점
     PLACE_ORIGIN_POSE_DEG = {
         "deg1": 90.0,
         "deg23": 20.0,
@@ -98,12 +112,12 @@ class RobotIKController:
         )
 
         print("\n[robot_ik] 초기화 완료")
-        print(f"[robot_ik] URDF_PATH        : {self.urdf_path}")
-        print(f"[robot_ik] SERVO_DIRECTIONS : {self.SERVO_DIRECTIONS}")
-        print(f"[robot_ik] TCP 보정값       : {self.GRIPPER_TCP_LENGTH_MM} mm")
-        print(f"[robot_ik] Wrist 기준각     : {self.WRIST_TCP_REFERENCE_DEG} deg")
-        print(f"[robot_ik] Wrist 보정 방식  : Elbow only")
-        print(f"[robot_ik] Elbow Gain       : {self.ELBOW_LEVEL_GAIN}")
+        print(f"[robot_ik] URDF_PATH         : {self.urdf_path}")
+        print(f"[robot_ik] SERVO_DIRECTIONS  : {self.SERVO_DIRECTIONS}")
+        print(f"[robot_ik] Pick Z Offsets    : {self.PICK_Z_OFFSET_BY_LABEL}")
+        print(f"[robot_ik] Wrist 기준각      : {self.WRIST_TCP_REFERENCE_DEG} deg")
+        print(f"[robot_ik] Wrist 보정 방식   : Elbow only")
+        print(f"[robot_ik] Elbow Gain        : {self.ELBOW_LEVEL_GAIN}")
 
     @staticmethod
     def clamp(value, min_v, max_v):
@@ -117,6 +131,18 @@ class RobotIKController:
         local_y = -x_mm * math.sin(theta) + y_mm * math.cos(theta)
 
         return local_x, local_y
+
+    def get_pick_z_offset(self, label=None):
+        if label is None:
+            return self.PICK_Z_OFFSET_BY_LABEL["DEFAULT"]
+
+        label = str(label)
+
+        if label in self.PICK_Z_OFFSET_BY_LABEL:
+            return self.PICK_Z_OFFSET_BY_LABEL[label]
+
+        print(f"[IK 경고] 등록되지 않은 label: {label}, DEFAULT Z offset 사용")
+        return self.PICK_Z_OFFSET_BY_LABEL["DEFAULT"]
 
     def calculate_ik_core(self, target_position_m):
         initial_joint_positions = [0.0] * len(self.chain.links)
@@ -179,26 +205,18 @@ class RobotIKController:
         """
         Elbow(deg45) 변화량만 Wrist(deg6)에 반영한다.
 
-        이전 보정식에서 사용하던 Shoulder 영향은 완전히 제거됨.
+        Shoulder 영향은 사용하지 않는다.
 
         식:
             elbow_delta = current_deg45 - origin_deg45
             deg6 = WRIST_TCP_REFERENCE_DEG - ELBOW_LEVEL_GAIN * elbow_delta
-
-        예:
-            기준 deg45 = 40
-            현재 deg45 = 60
-            elbow_delta = +20
-            deg6 = 110 - 20 = 90
         """
         if not self.ENABLE_GRIPPER_LEVELING:
             return angles
 
         leveled = dict(angles)
 
-        # Shoulder는 계산하지 않음. 이전 값이 남지 않도록 명시적으로 제외.
         elbow_delta = leveled["deg45"] - origin_pose_deg["deg45"]
-
         old_deg6 = leveled["deg6"]
 
         wrist_target = (
@@ -221,20 +239,25 @@ class RobotIKController:
         print(f"elbow_delta      : {elbow_delta:.2f} deg")
         print(f"old deg6         : {old_deg6:.2f} deg")
         print(f"leveled deg6     : {wrist_target:.2f} deg")
-        print("[INFO] Wrist 보정에는 Elbow 변화량만 사용합니다. Shoulder 변화량은 사용하지 않습니다.")
+        print("[INFO] Wrist 보정에는 Elbow 변화량만 사용합니다.")
 
         return leveled
 
-    def calculate_pick_joints(self, pick_position_mm):
+    def calculate_pick_joints(self, pick_position_mm, label=None):
         """
         4번 ACT_PICK용 raw joints 계산.
 
-        TCP 보정:
-            pick_z_mm = z_mm - GRIPPER_TCP_LENGTH_MM
+        입력:
+            pick_position_mm = [x_mm, y_mm, z_mm]
+            label = "A_1" / "B_3" / "B_8"
+
+        Pick Z 보정:
+            pick_z_mm = z_mm - PICK_Z_OFFSET_BY_LABEL[label]
         """
         x_mm, y_mm, z_mm = map(float, pick_position_mm)
 
-        pick_z_mm = z_mm - self.GRIPPER_TCP_LENGTH_MM
+        pick_z_offset_mm = self.get_pick_z_offset(label)
+        pick_z_mm = z_mm - pick_z_offset_mm
 
         if pick_z_mm < 0:
             pick_z_mm = 0.0
@@ -248,15 +271,19 @@ class RobotIKController:
         print("\n[IK] PICK IK 계산")
         print("[IK] 기준 원점        : 3번 포즈 결과값")
         print(f"[IK] 3번 기준 포즈    : {self.PICK_ORIGIN_POSE_DEG}")
+        print(f"[IK] Box label        : {label}")
         print(f"[IK] Pick 원본 mm     : [{x_mm:.1f}, {y_mm:.1f}, {z_mm:.1f}]")
-        print(f"[IK] TCP 보정값       : -{self.GRIPPER_TCP_LENGTH_MM:.1f} mm")
+        print(f"[IK] Pick Z Offset    : -{pick_z_offset_mm:.1f} mm")
         print(f"[IK] Pick 보정 후 mm  : [{x_mm:.1f}, {y_mm:.1f}, {pick_z_mm:.1f}]")
         print(f"[IK] target_position_m: {target_position_m}")
 
         return self.calculate_ik_core(target_position_m)
 
-    def calculate_pick_ik(self, pick_position_mm):
-        joints = self.calculate_pick_joints(pick_position_mm)
+    def calculate_pick_ik(self, pick_position_mm, label=None):
+        joints = self.calculate_pick_joints(
+            pick_position_mm,
+            label=label,
+        )
 
         angles = self.joints_to_motor_angles(
             joints,
@@ -270,6 +297,16 @@ class RobotIKController:
             mode_name="PICK",
         )
 
+        # Pick 동작에서는 Base가 움직이지 않도록 고정한다.
+        # 3번 포즈 기준 deg1 = 0.0을 유지.
+        old_deg1 = angles["deg1"]
+        angles["deg1"] = self.PICK_ORIGIN_POSE_DEG["deg1"]
+
+        print("\n[Pick Base Lock]")
+        print(f"old deg1    : {old_deg1:.2f} deg")
+        print(f"locked deg1 : {angles['deg1']:.2f} deg")
+        print("[INFO] Pick IK에서는 Base 신호를 고정합니다.")
+
         print("\n[IK] PICK 모터 각도")
         self.print_motor_angles(angles)
 
@@ -278,7 +315,7 @@ class RobotIKController:
     def calculate_place_joints(self, load_position_mm, place_origin_pose_deg=None):
         """
         7번 ACT_PLACE용 raw joints 계산.
-        Place는 현재 TCP 보정을 적용하지 않는다.
+        Place는 현재 Pick Z Offset을 적용하지 않는다.
         """
         if place_origin_pose_deg is None:
             place_origin_pose_deg = self.PLACE_ORIGIN_POSE_DEG
@@ -356,14 +393,20 @@ class RobotIKController:
 if __name__ == "__main__":
     ik = RobotIKController("mybot.urdf")
 
-    pick = ik.calculate_pick_ik([120, 80, 150])
-    ik.validate_output_range(pick)
+    pick_a1 = ik.calculate_pick_ik([120, 80, 150], label="A_1")
+    ik.validate_output_range(pick_a1)
+
+    pick_b8 = ik.calculate_pick_ik([120, 80, 230], label="B_8")
+    ik.validate_output_range(pick_b8)
 
     place = ik.calculate_place_ik([200, 100, 80])
     ik.validate_output_range(place)
 
-    print("\n[PICK IK dict]")
-    print(pick)
+    print("\n[PICK A_1 IK dict]")
+    print(pick_a1)
+
+    print("\n[PICK B_8 IK dict]")
+    print(pick_b8)
 
     print("\n[PLACE IK dict]")
     print(place)
