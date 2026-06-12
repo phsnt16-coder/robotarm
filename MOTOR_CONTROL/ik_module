@@ -40,7 +40,7 @@ class RobotIKController:
         "deg1": 1.0,
         "deg23": -1.0,
         "deg45": 1.0,
-        "deg6": -1.0,
+        "deg6": 1.0,
         "deg7": 1.0,
     }
 
