@@ -411,7 +411,7 @@ def pose_3_go_to_place(min_deg=0, max_deg=90):
 
     deg1 = 0
     deg23 = 60
-    deg45 = 45
+    deg45 = 10
     deg6 = 110
     deg7 = 0
 
