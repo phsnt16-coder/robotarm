@@ -39,13 +39,11 @@ OLD_TIME = 2000
 NEW_SPEED = 181
 NEW_ACC = 1
 
-SERVO_CENTER_DEG = 110.0
+INIT_DEG_5 = 0.0
+INIT_DEG_6 = 110.0
 
-INIT_DEG_5 = SERVO_CENTER_DEG
-INIT_DEG_6 = SERVO_CENTER_DEG
-
-SMOOTH_STEP_COUNT = 15
-SMOOTH_DELAY = 0.015
+SMOOTH_STEP_COUNT = 30
+SMOOTH_DELAY = 0.03
 
 
 # ============================================================
@@ -399,66 +397,14 @@ class RobotArm:
         print(f"ID4 구형 목표Pos:{pos4} | result:{result4} | error:{error4}")
 
     # ========================================================
-    # 고속 이동용 Silent Write 함수
-    # ========================================================
-    def _write_single_1_silent(self, deg):
-        deg = clamp(float(deg), 0, MAX_DEG)
-        pos = deg_to_pos(deg)
-        self.last_deg_1 = deg
-        self.old_servo.WritePos(ID_1, pos, 0, OLD_SPEED)
-
-    def _write_single_6_silent(self, deg):
-        deg = clamp(float(deg), 0, MAX_DEG)
-        pos = deg_to_pos(deg)
-        self.last_deg_6 = deg
-        self.old_servo.WritePos(ID_6, pos, 0, OLD_SPEED)
-
-    def _write_single_7_silent(self, deg):
-        deg = clamp(float(deg), 0, MAX_DEG)
-        pos = deg_to_pos(deg)
-        self.last_deg_7 = deg
-        self.old_servo.WritePos(ID_7, pos, 0, OLD_SPEED)
-
-    def _write_sync_2_3_silent(self, deg):
-        deg = clamp(float(deg), 0, MAX_DEG)
-        logical_pos = deg_to_pos(deg)
-
-        # 병렬 장착 보정. 삭제 금지.
-        pos2 = logical_pos
-        pos3 = reverse_pos(logical_pos)
-
-        self.last_deg_23 = deg
-
-        self.old_servo.WritePos(ID_2, pos2, 0, OLD_SPEED)
-        self.old_servo.WritePos(ID_3, pos3, 0, OLD_SPEED)
-
-    def _write_sync_4_5_silent(self, deg):
-        deg = clamp(float(deg), 0, MAX_DEG)
-        logical_pos = deg_to_pos(deg)
-
-        # 병렬 장착 보정. 삭제 금지.
-        pos5 = logical_pos
-        pos4 = reverse_pos(logical_pos)
-
-        self.last_deg_45 = deg
-
-        self.new_servo.WritePosEx(ID_5, pos5, NEW_SPEED, NEW_ACC)
-        self.old_servo.WritePos(ID_4, pos4, OLD_TIME, OLD_SPEED)
-
-    # ========================================================
     # 전체 이동 / 보간
     # ========================================================
     def move_all_pose(self, deg1, deg23, deg45, deg6, deg7):
-        """
-        시퀀스 실행용 고속 이동.
-        기존 move_single_* 함수는 디버그 출력과 위치 읽기가 많아 버벅임이 발생하므로,
-        실제 연속 동작에서는 silent write만 사용한다.
-        """
-        self._write_single_1_silent(deg1)
-        self._write_sync_2_3_silent(deg23)
-        self._write_sync_4_5_silent(deg45)
-        self._write_single_6_silent(deg6)
-        self._write_single_7_silent(deg7)
+        self.move_single_1(deg1)
+        self.move_sync_2_3(deg23)
+        self.move_sync_4_5(deg45)
+        self.move_single_6(deg6)
+        self.move_single_7(deg7)
 
     def smooth_move_all_pose(self, target_deg1, target_deg23, target_deg45, target_deg6, target_deg7):
         target_deg1 = float(target_deg1)
@@ -472,15 +418,6 @@ class RobotArm:
         start_deg45 = self.last_deg_45 if self.last_deg_45 is not None else target_deg45
         start_deg6 = self.last_deg_6 if self.last_deg_6 is not None else target_deg6
         start_deg7 = self.last_deg_7 if self.last_deg_7 is not None else target_deg7
-
-        if (
-            abs(start_deg1 - target_deg1) < 0.01 and
-            abs(start_deg23 - target_deg23) < 0.01 and
-            abs(start_deg45 - target_deg45) < 0.01 and
-            abs(start_deg6 - target_deg6) < 0.01 and
-            abs(start_deg7 - target_deg7) < 0.01
-        ):
-            return
 
         for i in range(1, SMOOTH_STEP_COUNT + 1):
             ratio = i / SMOOTH_STEP_COUNT
@@ -505,33 +442,15 @@ class RobotArm:
 
     def pose_1_base(self):
         print("\n===== POSE 1 : BASE =====")
-        self.smooth_move_all_pose(
-            SERVO_CENTER_DEG,
-            SERVO_CENTER_DEG,
-            SERVO_CENTER_DEG,
-            SERVO_CENTER_DEG,
-            SERVO_CENTER_DEG,
-        )
+        self.smooth_move_all_pose(0, 30, 0, 200, 0)
 
     def pose_2_pick_ready(self):
         print("\n===== POSE 2 : PICK READY =====")
-        self.smooth_move_all_pose(
-            SERVO_CENTER_DEG,
-            SERVO_CENTER_DEG,
-            SERVO_CENTER_DEG,
-            SERVO_CENTER_DEG,
-            SERVO_CENTER_DEG,
-        )
+        self.smooth_move_all_pose(0, 0, 0, INIT_DEG_6, 0)
 
     def pose_3_go_to_place(self):
-        print("\n===== POSE 3 : PICK IK ORIGIN / LOGICAL ZERO =====")
-        self.smooth_move_all_pose(
-            SERVO_CENTER_DEG,
-            SERVO_CENTER_DEG,
-            SERVO_CENTER_DEG,
-            SERVO_CENTER_DEG,
-            SERVO_CENTER_DEG,
-        )
+        print("\n===== POSE 3 : GO TO PLACE =====")
+        self.smooth_move_all_pose(0, 60, 40, INIT_DEG_6, 0)
 
     def pose_5_rotation(self, target_deg1=45):
         print("\n===== POSE 5 : ROTATION MODE =====")
@@ -553,14 +472,8 @@ class RobotArm:
         return self.pose_5_rotation(target_deg1)
 
     def pose_6_place_origin(self):
-        print("\n===== POSE 6 : PLACE IK ORIGIN / LOGICAL ZERO =====")
-        self.smooth_move_all_pose(
-            SERVO_CENTER_DEG,
-            SERVO_CENTER_DEG,
-            SERVO_CENTER_DEG,
-            SERVO_CENTER_DEG,
-            SERVO_CENTER_DEG,
-        )
+        print("\n===== POSE 6 : PLACE IK ORIGIN =====")
+        self.smooth_move_all_pose(45, 20, 20, INIT_DEG_6, 0)
 
     def act_pick(self, box_type="A_1", ik_angles=None):
         print("\n===== POSE 4 : ACT_PICK =====")
@@ -618,24 +531,6 @@ class RobotArm:
         )
 
         return True
-
-    def vacuum_on(self):
-        """
-        진공 흡착 ON.
-
-        현재 파일은 모터 제어 모듈 기준이므로 실제 GPIO/PWM 제어부는
-        하드웨어 연결 방식에 맞게 이 함수 내부에 추가하면 된다.
-        """
-        print("[VACUUM] ON")
-
-    def vacuum_off(self):
-        """
-        진공 흡착 OFF.
-
-        현재 파일은 모터 제어 모듈 기준이므로 실제 GPIO/PWM 제어부는
-        하드웨어 연결 방식에 맞게 이 함수 내부에 추가하면 된다.
-        """
-        print("[VACUUM] OFF")
 
     def get_current_pose(self):
         """
@@ -758,14 +653,14 @@ class RobotArm:
             elif menu == "3":
                 self.pose_3_go_to_place()
             elif menu == "4":
-                ik = input_ik_angles(default=make_ik_angles(SERVO_CENTER_DEG, SERVO_CENTER_DEG, SERVO_CENTER_DEG, SERVO_CENTER_DEG, SERVO_CENTER_DEG))
+                ik = input_ik_angles(default=make_ik_angles(0, 20, 20, INIT_DEG_6, 0))
                 self.act_pick(box_type="A_1", ik_angles=ik)
             elif menu == "5":
                 self.rotation_mode(target_deg1=45)
             elif menu == "6":
                 self.pose_6_place_origin()
             elif menu == "7":
-                ik = input_ik_angles(default=make_ik_angles(SERVO_CENTER_DEG, SERVO_CENTER_DEG, SERVO_CENTER_DEG, SERVO_CENTER_DEG, SERVO_CENTER_DEG))
+                ik = input_ik_angles(default=make_ik_angles(45, 20, 20, INIT_DEG_6, 0))
                 self.act_place(ik_angles=ik)
             elif menu == "8":
                 self.print_all_old_positions()
@@ -798,14 +693,6 @@ def close_robot():
 
 def get_current_pose():
     return get_default_arm().get_current_pose()
-
-
-def vacuum_on():
-    return get_default_arm().vacuum_on()
-
-
-def vacuum_off():
-    return get_default_arm().vacuum_off()
 
 
 def save_initial_positions():
