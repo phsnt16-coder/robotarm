@@ -40,11 +40,16 @@ def execute_sequence_1_2_3_4_vac_2_6_7_vacoff(arm, ik_solver, label, pick, load)
         VACUUM ON : 4번 포즈 도착 직후 흡착
         2 : PICK_READY 복귀
         6 : PLACE 기준 포즈, Base 90도
-        7 : ACT_PLACE, Place IK
+        7 : ACT_PLACE, Place IK (하드코딩 제거 - IK 결과 그대로 사용)
         VACUUM OFF : 7번 포즈 도착 직후 해제
+        복귀 : 초기 위치로 복귀
     """
+
     px, py, pz = pick
     lx, ly, lz = load
+
+    # Y축 카메라-로봇 오프셋 보정
+    py = py - 150.0
 
     print("\n[RECEIVER] 시퀀스 시작: 1-2-3-4-VAC_ON-2-6-7-VAC_OFF")
 
@@ -70,6 +75,7 @@ def execute_sequence_1_2_3_4_vac_2_6_7_vacoff(arm, ik_solver, label, pick, load)
 
     print("\n[SEQ 6] PLACE IK ORIGIN")
     arm.pose_6_place_origin()
+    time.sleep(1.2)
 
     place_origin_pose = arm.get_current_pose()
 
@@ -78,11 +84,22 @@ def execute_sequence_1_2_3_4_vac_2_6_7_vacoff(arm, ik_solver, label, pick, load)
         [lx, ly, lz],
         place_origin_pose_deg=place_origin_pose,
     )
+
+    print(f"[PLACE IK 결과]")
+    print(f"  deg1  : {place_ik['deg1']:.1f}")
+    print(f"  deg23 : {place_ik['deg23']:.1f}")
+    print(f"  deg45 : {place_ik['deg45']:.1f}")
+    print(f"  deg6  : {place_ik['deg6']:.1f}")
+    print(f"  deg7  : {place_ik['deg7']:.1f}")
+
     arm.act_place(ik_angles=place_ik)
 
     print("\n[VACUUM] 7번 포즈 도착 직후 OFF")
     arm.vacuum_off()
     time.sleep(0.3)
+
+    print("\n[SEQ 복귀] 초기 위치로 복귀")
+    arm.return_to_initial()
 
     print("\n[RECEIVER] 시퀀스 완료")
 
@@ -91,7 +108,7 @@ def motor_control_receiver(q):
     """
     Queue 데이터 수신 후 1-2-3-4-VAC_ON-2-6-7-VAC_OFF 시퀀스 실행.
     """
-    ik_solver = RobotIKController("mybot_motor_aligned_full_skeleton.urdf")
+    ik_solver = RobotIKController("mybot.urdf")
     arm = RobotArm()
 
     if not arm.open_robot_port():
