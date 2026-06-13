@@ -17,7 +17,7 @@ import os
 # - ID4, ID5는 OLD_TIME, OLD_SPEED 사용
 # ============================================================
 
-PORT = os.environ.get("ROBOT_PORT", "/dev/ttyACM1")
+PORT = os.environ.get("ROBOT_PORT", "/dev/ttyACM0")
 BAUD = 1000000
 
 MAX_POS = 1023
@@ -462,22 +462,22 @@ class RobotArm:
     def pose_1_base(self):
         print("\n===== POSE 1 : BASE =====")
         # Base 0도, Shoulder 30도, Elbow 140도(수직기준), Wrist 110도
-        self.smooth_move_all_pose(0, 30, 141, INIT_DEG_6, 0)
+        self.smooth_move_all_pose(0, 0, 0, INIT_DEG_6, 0)
 
     def pose_2_pick_ready(self):
         print("\n===== POSE 2 : PICK READY =====")
         # Elbow 140도 = 수직 기준 자세
-        self.smooth_move_all_pose(0, 0, 141, INIT_DEG_6, 0)
+        self.smooth_move_all_pose(0, 0, 20, INIT_DEG_6, 0)
 
     def pose_3_go_to_place(self):
         print("\n===== POSE 3 : GO TO PLACE =====")
         # Shoulder 60도 앞으로, Elbow 140도 유지
-        self.smooth_move_all_pose(0, 60, 141, INIT_DEG_6, 0)
+        self.smooth_move_all_pose(0, 50, 75, INIT_DEG_6, 0)
 
     def pose_5_rotation(self, target_deg1=45):
         print("\n===== POSE 5 : ROTATION MODE =====")
         target_deg23 = self.last_deg_23 if self.last_deg_23 is not None else 0
-        target_deg45 = self.last_deg_45 if self.last_deg_45 is not None else 141
+        target_deg45 = self.last_deg_45 if self.last_deg_45 is not None else 75
         target_deg6 = self.last_deg_6 if self.last_deg_6 is not None else INIT_DEG_6
         target_deg7 = self.last_deg_7 if self.last_deg_7 is not None else 0
         self.smooth_move_all_pose(target_deg1, target_deg23, target_deg45, target_deg6, target_deg7)
@@ -488,7 +488,7 @@ class RobotArm:
     def pose_6_place_origin(self):
         print("\n===== POSE 6 : PLACE IK ORIGIN =====")
         # Base 90도 회전, Shoulder/Elbow 수직 기준 자세
-        self.smooth_move_all_pose(90, 20, 141, INIT_DEG_6, 0)
+        self.smooth_move_all_pose(90, 40, 75, INIT_DEG_6, 0)
 
     def act_pick(self, box_type="A_1", ik_angles=None):
         print("\n===== POSE 4 : ACT_PICK =====")
