@@ -1,0 +1,209 @@
+ [MAIN] ArUco 인식 성공
+
+[MAIN] Marker ID    : 1
+
+[MAIN] Marker Angle : -0.8°
+
+[MAIN] Pick Raw     : [np.float64(3.3), np.float64(383.0), np.float64(383.0)]
+
+[MAIN] Up Axis      : 0
+
+[MAIN] Pick Z 박스 높이 기반 보정 완료
+
+[MAIN] Box Height : 50.0 mm
+
+[MAIN] Pick Coord : [np.float64(3.3), np.float64(383.0), 120.0]
+
+[MAIN] 적재 위치 계산 성공
+
+
+==================================================
+
+[MAIN] 데이터 확정
+
+상자 종류 : A_1
+
+Pick : X=3.3, Y=383.0, Z=120.0
+
+Load : X=50.0, Y=130.0, Z=50.0
+
+회전 여부 : False
+
+==================================================
+
+[MAIN] 적재 시각화 업데이트 완료
+
+[MAIN → RECEIVER] Queue 전송 성공
+
+[MAIN] receiver에서 1-2-3-4-VAC_ON-2-6-7-VAC_OFF 시퀀스 실행
+
+
+[현재 적재 상태]
+
+- A_1: 위치(0,0,0) 크기(140.0,50.0,100.0)
+
+총 무게: 1.0/100
+
+
+[RECEIVER] Queue 수신: {'label': 'A_1', 'pick': [np.float64(3.3), np.float64(383.0), 120.0], 'load': [50.0, 130.0, 50.0], 'angle': np.float64(-0.85), 'is_rotated': False, 'success': True, 'box_size': {'w': 140.0, 'h': 50.0, 'd': 100.0}}
+
+상자를 인식하려면 Enter/y, 종료는 ESC/q: 
+
+
+==================================================
+
+[RECEIVER] 라벨: A_1 | 각도: -0.8°
+
+Pick: [3.3, 383.0, 120.0] mm
+
+Load: [50.0, 130.0, 50.0] mm
+
+==================================================
+
+
+[RECEIVER] 시퀀스 시작: 1-2-3-4-VAC_ON-2-6-7-VAC_OFF
+
+
+[SEQ 1] BASE
+
+
+===== POSE 1 : BASE =====
+
+
+[SEQ 2] PICK_READY
+
+
+===== POSE 2 : PICK READY =====
+
+
+[SEQ 3] PICK IK ORIGIN
+
+
+===== POSE 3 : GO TO PLACE =====
+
+
+[SEQ 4] ACT_PICK
+
+
+[IK] PICK IK 계산
+
+[IK] 기준 원점        : 3번 포즈 결과값
+
+[IK] 3번 기준 포즈    : {'deg1': 0.0, 'deg23': 60.0, 'deg45': 40.0, 'deg6': 110.0, 'deg7': 0.0}
+
+[IK] Pick 상대좌표 mm : [3.3, 233.0, 120.0]
+
+[IK] TCP 보정 후 mm   : [3.3, 233.0, 200.0]
+
+
+[Gripper Elbow-only Leveling]
+
+mode             : PICK
+
+origin deg45     : 40.00 deg
+
+current deg45    : 40.00 deg
+
+elbow_delta      : -0.00 deg
+
+old deg6         : 110.00 deg
+
+leveled deg6     : 110.00 deg
+
+[INFO] Wrist 보정에는 Elbow 변화량만 사용합니다. Shoulder 변화량은 사용하지 않습니다.
+
+
+[IK] PICK 모터 각도
+
+deg1  Base              : 0.00 deg
+
+deg23 Shoulder Pair     : 60.00 deg
+
+deg45 Elbow Pair        : 40.00 deg
+
+deg6  Wrist Elbow-only  : 110.00 deg
+
+deg7  Gripper Rotation  : 0.00 deg
+
+
+===== POSE 4 : ACT_PICK =====
+
+[대상 박스] A_1
+
+[IK 사용] Pick IK 값으로 이동
+
+
+[ACT_PICK IK 각도]
+
+ID1  Base              : 0.00 deg
+
+ID2/3 Shoulder Pair    : 60.00 deg
+
+ID4/5 Elbow Pair       : 40.00 deg
+
+ID6  Wrist             : 110.00 deg
+
+ID7  Gripper Rotation  : 0.00 deg
+
+
+[VACUUM] 4번 포즈 도착 직후 ON
+
+
+[그리퍼 모듈] PWM 초기화
+
+[VACUUM] ON
+
+
+[SEQ 2] PICK_READY 복귀
+
+
+===== POSE 2 : PICK READY =====
+
+
+[SEQ 6] PLACE IK ORIGIN
+
+
+===== POSE 6 : PLACE IK ORIGIN =====
+
+
+[SEQ 7] ACT_PLACE
+
+
+[Gripper Elbow-only Leveling]
+
+mode             : PLACE
+
+origin deg45     : 20.00 deg
+
+current deg45    : 121.38 deg
+
+elbow_delta      : 101.38 deg
+
+old deg6         : 153.53 deg
+
+leveled deg6     : 8.62 deg
+
+[INFO] Wrist 보정에는 Elbow 변화량만 사용합니다. Shoulder 변화량은 사용하지 않습니다.
+
+
+===== POSE 7 : ACT_PLACE =====
+
+[IK 사용] Place IK 값으로 이동
+
+
+[ACT_PLACE IK 각도]
+
+ID1  Base              : 90.00 deg
+
+ID2/3 Shoulder Pair    : 60.00 deg
+
+ID4/5 Elbow Pair       : 30.00 deg
+
+ID6  Wrist             : 110.00 deg
+
+ID7  Gripper Rotation  : 0.00 deg
+
+
+[VACUUM] 7번 포즈 도착 직후 OFF
+
+[VACUUM] OFF 
