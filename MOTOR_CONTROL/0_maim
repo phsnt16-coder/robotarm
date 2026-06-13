@@ -6,7 +6,7 @@ from picamera2 import Picamera2
 
 from ArUco import live_aruco_detection
 from py3Dbp import Item, LiveBin
-from receiver_module import motor_control_receiver
+from receiver import motor_control_receiver
 from visualizer import BinVisualizer
 
 
@@ -34,15 +34,48 @@ BOX_DATA = {
     },
 }
 
+# ============================================================
+# LiveBin → 로봇 베이스 좌표계 변환 설정
+#
+# 물리적 배치:
+#   - 로봇 Base 90도 회전 후 정면 방향이 bin 방향
+#   - bin 중심까지 전방 거리 : BIN_DISTANCE_MM
+#   - bin 크기 200x200x200mm → 중심 기준 ±100mm
+#   - bin 내부 좌표 (0,0,0) = bin 앞면 왼쪽 아래 모서리
+#   - bin 중심 = (100, 100, 100)
+# ============================================================
+BIN_DISTANCE_MM = 320.0   # 로봇 베이스에서 bin 앞면까지 거리 (mm)
+BIN_WIDTH_MM    = 200.0   # bin 가로 크기
+BIN_DEPTH_MM    = 200.0   # bin 세로 크기
+
+
+def bin_to_robot_coords(gripper_lx, gripper_ly, gripper_lz):
+    """
+    bin 내부 좌표 → 로봇 베이스 기준 좌표 변환.
+
+    bin 내부 좌표계:
+        lx : bin 가로 (0 ~ 200mm)
+        ly : bin 세로 (0 ~ 200mm, 로봇 쪽이 0)
+        lz : bin 높이 (0 ~ 200mm)
+
+    로봇 베이스 기준 좌표계 (Base 90도 회전 후):
+        X  : 좌우 (bin 중심 기준, 오른쪽+)
+        Y  : 전방 거리
+        Z  : 높이
+    """
+    # bin 중심 기준 좌우 오프셋
+    robot_x = gripper_lx - (BIN_WIDTH_MM / 2)
+
+    # 로봇에서 bin 안쪽까지 전방 거리
+    robot_y = BIN_DISTANCE_MM + gripper_ly
+
+    # 높이 그대로
+    robot_z = gripper_lz
+
+    return robot_x, robot_y, robot_z
+
 
 def should_exit(user_input):
-    """
-    종료 입력 처리.
-    - q
-    - quit
-    - esc
-    - 실제 ESC 문자 '\\x1b'
-    """
     value = user_input.strip().lower()
     return value in ["q", "quit", "esc", "\x1b"]
 
@@ -89,7 +122,7 @@ def main():
     p_receiver.daemon = True
     p_receiver.start()
 
-    print("[MAIN] receiver_sequence_1234267.py 프로세스 시작 완료")
+    print("[MAIN] receiver 프로세스 시작 완료")
     print("\n[시스템 가동]")
     print("Enter 또는 y : 인식 시작")
     print("ESC 또는 q   : 종료")
@@ -107,10 +140,7 @@ def main():
 
             print("\n[MAIN] ArUco 인식 시작")
 
-            result = live_aruco_detection(
-                calib,
-                picam2,
-            )
+            result = live_aruco_detection(calib, picam2)
 
             if not result:
                 print("[MAIN] ArUco 인식 실패")
@@ -142,13 +172,7 @@ def main():
             print(f"[MAIN] Box Height : {h_now:.1f} mm")
             print(f"[MAIN] Pick Coord : {pick_coords}")
 
-            new_item = Item(
-                label,
-                w_top,
-                h_now,
-                d_top,
-                spec["weight"],
-            )
+            new_item = Item(label, w_top, h_now, d_top, spec["weight"])
 
             success, is_rotated = bin_system.place_item(new_item)
 
@@ -158,15 +182,17 @@ def main():
 
             print("[MAIN] 적재 위치 계산 성공")
 
+            # bin 내부 좌표 계산
             gripper_lx = bin_system.W - (new_item.x + (new_item.w / 2))
             gripper_ly = new_item.y + (new_item.d / 2)
             gripper_lz = new_item.z + new_item.h
 
-            load_coords = [
-                gripper_lx,
-                gripper_ly,
-                gripper_lz,
-            ]
+            # 로봇 베이스 기준 좌표로 변환
+            robot_x, robot_y, robot_z = bin_to_robot_coords(
+                gripper_lx, gripper_ly, gripper_lz
+            )
+
+            load_coords = [robot_x, robot_y, robot_z]
 
             print("\n" + "=" * 50)
             print("[MAIN] 데이터 확정")
@@ -177,9 +203,12 @@ def main():
                 f"Z={pick_coords[2]:.1f}"
             )
             print(
-                f"Load : X={load_coords[0]:.1f}, "
-                f"Y={load_coords[1]:.1f}, "
-                f"Z={load_coords[2]:.1f}"
+                f"Load (bin 내부) : lx={gripper_lx:.1f}, "
+                f"ly={gripper_ly:.1f}, lz={gripper_lz:.1f}"
+            )
+            print(
+                f"Load (로봇기준) : X={robot_x:.1f}, "
+                f"Y={robot_y:.1f}, Z={robot_z:.1f}"
             )
             print(f"회전 여부 : {is_rotated}")
             print("=" * 50)
@@ -215,23 +244,17 @@ def main():
         print("\n[MAIN] 종료 처리 시작")
 
         try:
-            shutdown_payload = {
-                "cmd": "shutdown",
-            }
-
+            shutdown_payload = {"cmd": "shutdown"}
             if not shared_queue.full():
                 shared_queue.put(shutdown_payload)
                 print("[MAIN → RECEIVER] 종료 명령 전송")
-
             time.sleep(2.0)
-
         except Exception as e:
             print(f"[MAIN] 종료 명령 전송 오류: {e}")
 
         try:
             picam2.stop()
             print("[MAIN] 카메라 종료 완료")
-
         except Exception as e:
             print(f"[MAIN] 카메라 종료 오류: {e}")
 
@@ -240,12 +263,10 @@ def main():
                 p_receiver.terminate()
             p_receiver.join(timeout=2.0)
             print("[MAIN] receiver 프로세스 종료 완료")
-
         except Exception as e:
             print(f"[MAIN] receiver 종료 오류: {e}")
 
         cv2.destroyAllWindows()
-
         print("[MAIN] 시스템 종료")
 
 
