@@ -6,7 +6,7 @@ from picamera2 import Picamera2
 
 from ArUco import live_aruco_detection
 from py3Dbp import Item, LiveBin
-from receiver_sequence_1234vac267vacoff import motor_control_receiver
+from receiver_module import motor_control_receiver
 from visualizer import BinVisualizer
 
 
