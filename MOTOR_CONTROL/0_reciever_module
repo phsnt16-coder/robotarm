@@ -1,7 +1,7 @@
 import time
 
-from ik_controller_motor_aligned_base90 import RobotIKController
-from motor_controller_modular_base90_vacuum import RobotArm
+from robot_ik import RobotIKController
+from MOTOR_CONTROL import RobotArm
 
 
 def parse_packet(packet_data):
