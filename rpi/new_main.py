@@ -1,0 +1,254 @@
+import cv2
+import pickle
+import time
+from multiprocessing import Process, Queue
+from picamera2 import Picamera2
+
+from ArUco import live_aruco_detection
+from py3Dbp import Item, LiveBin
+from receiver import motor_control_receiver
+from visualizer import BinVisualizer
+
+
+BOX_DATA = {
+    1: {
+        "label": "A_1",
+        "w": 140.0,
+        "h": 50.0,
+        "d": 100.0,
+        "weight": 1.0,
+    },
+    2: {
+        "label": "B_3",
+        "w": 120.0,
+        "h": 53.0,
+        "d": 110.0,
+        "weight": 1.0,
+    },
+    3: {
+        "label": "B_8",
+        "w": 150.0,
+        "h": 100.0,
+        "d": 100.0,
+        "weight": 1.0,
+    },
+}
+
+
+def should_exit(user_input):
+    """
+    종료 입력 처리.
+    - q
+    - quit
+    - esc
+    - 실제 ESC 문자 '\\x1b'
+    """
+    value = user_input.strip().lower()
+    return value in ["q", "quit", "esc", "\x1b"]
+
+
+def main():
+    try:
+        with open("camera_calibration.pkl", "rb") as f:
+            calib = pickle.load(f)
+
+    except FileNotFoundError:
+        print("[MAIN] 에러: camera_calibration.pkl 파일이 없습니다.")
+        return
+
+    picam2 = Picamera2()
+
+    config = picam2.create_video_configuration(
+        main={
+            "size": (640, 480),
+            "format": "BGR888",
+        }
+    )
+
+    picam2.configure(config)
+    picam2.start()
+
+    print("[MAIN] 카메라 초기화 완료")
+
+    bin_system = LiveBin(
+        200,
+        200,
+        200,
+        max_weight=100,
+    )
+
+    print("[MAIN] 적재 시스템 초기화 완료")
+
+    shared_queue = Queue(maxsize=5)
+
+    p_receiver = Process(
+        target=motor_control_receiver,
+        args=(shared_queue,),
+    )
+
+    p_receiver.daemon = True
+    p_receiver.start()
+
+    print("[MAIN] receiver_sequence_1234267.py 프로세스 시작 완료")
+    print("\n[시스템 가동]")
+    print("Enter 또는 y : 인식 시작")
+    print("ESC 또는 q   : 종료")
+    print("모터 시퀀스  : 1-2-3-4-VAC_ON-2-6-7-VAC_OFF")
+
+    try:
+        while True:
+            user_input = input("\n상자를 인식하려면 Enter/y, 종료는 ESC/q: ")
+
+            if should_exit(user_input):
+                break
+
+            if user_input.strip().lower() not in ["", "y"]:
+                continue
+
+            print("\n[MAIN] ArUco 인식 시작")
+
+            result = live_aruco_detection(
+                calib,
+                picam2,
+            )
+
+            if not result:
+                print("[MAIN] ArUco 인식 실패")
+                continue
+
+            marker_id, matched_angle, pick_coords, up_axis = result
+
+            print("[MAIN] ArUco 인식 성공")
+            print(f"[MAIN] Marker ID    : {marker_id}")
+            print(f"[MAIN] Marker Angle : {matched_angle:.1f}°")
+            print(f"[MAIN] Pick Raw     : {pick_coords}")
+            print(f"[MAIN] Up Axis      : {up_axis}")
+
+            if marker_id not in BOX_DATA:
+                print(f"[MAIN] 등록되지 않은 Marker ID : {marker_id}")
+                continue
+
+            spec = BOX_DATA[marker_id]
+            label = spec["label"]
+
+            w_top = spec["w"]
+            d_top = spec["d"]
+            h_now = spec["h"]
+
+            # Pick Z 보정
+            pick_coords[2] = 70.0 + h_now
+
+            print("[MAIN] Pick Z 박스 높이 기반 보정 완료")
+            print(f"[MAIN] Box Height : {h_now:.1f} mm")
+            print(f"[MAIN] Pick Coord : {pick_coords}")
+
+            new_item = Item(
+                label,
+                w_top,
+                h_now,
+                d_top,
+                spec["weight"],
+            )
+
+            success, is_rotated = bin_system.place_item(new_item)
+
+            if not success:
+                print(f"[MAIN] {label} 적재 공간 부족")
+                continue
+
+            print("[MAIN] 적재 위치 계산 성공")
+
+            gripper_lx = bin_system.W - (new_item.x + (new_item.w / 2))
+            gripper_ly = new_item.y + (new_item.d / 2)
+            gripper_lz = new_item.z + new_item.h
+
+            load_coords = [
+                gripper_ly,
+                gripper_lx,
+                gripper_lz,
+            ]
+
+            print("\n" + "=" * 50)
+            print("[MAIN] 데이터 확정")
+            print(f"상자 종류 : {label}")
+            print(
+                f"Pick : X={pick_coords[0]:.1f}, "
+                f"Y={pick_coords[1]:.1f}, "
+                f"Z={pick_coords[2]:.1f}"
+            )
+            print(
+                f"Load : X={load_coords[0]:.1f}, "
+                f"Y={load_coords[1]:.1f}, "
+                f"Z={load_coords[2]:.1f}"
+            )
+            print(f"회전 여부 : {is_rotated}")
+            print("=" * 50)
+
+            visualizer = BinVisualizer(bin_system)
+            visualizer.update_plot()
+            print("[MAIN] 적재 시각화 업데이트 완료")
+
+            packet_payload = {
+                "label": label,
+                "pick": pick_coords,
+                "load": load_coords,
+                "angle": matched_angle,
+                "is_rotated": is_rotated,
+                "success": success,
+                "load": load_coords,
+                "box_size": {
+                    "w": w_top,
+                    "h": h_now,
+                    "d": d_top,
+                },                
+            }
+
+            if not shared_queue.full():
+                shared_queue.put(packet_payload)
+                print("[MAIN → RECEIVER] Queue 전송 성공")
+                print("[MAIN] receiver에서 1-2-3-4-VAC_ON-2-6-7-VAC_OFF 시퀀스 실행")
+            else:
+                print("[MAIN → RECEIVER] Queue 전송 실패: Queue가 가득 참")
+
+            bin_system.print_state()
+
+    finally:
+        print("\n[MAIN] 종료 처리 시작")
+
+        try:
+            shutdown_payload = {
+                "cmd": "shutdown",
+            }
+
+            if not shared_queue.full():
+                shared_queue.put(shutdown_payload)
+                print("[MAIN → RECEIVER] 종료 명령 전송")
+
+            time.sleep(2.0)
+
+        except Exception as e:
+            print(f"[MAIN] 종료 명령 전송 오류: {e}")
+
+        try:
+            picam2.stop()
+            print("[MAIN] 카메라 종료 완료")
+
+        except Exception as e:
+            print(f"[MAIN] 카메라 종료 오류: {e}")
+
+        try:
+            if p_receiver.is_alive():
+                p_receiver.terminate()
+            p_receiver.join(timeout=2.0)
+            print("[MAIN] receiver 프로세스 종료 완료")
+
+        except Exception as e:
+            print(f"[MAIN] receiver 종료 오류: {e}")
+
+        cv2.destroyAllWindows()
+
+        print("[MAIN] 시스템 종료")
+
+
+if __name__ == "__main__":
+    main()
