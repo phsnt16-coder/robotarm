@@ -1,216 +1,149 @@
-<joint name="joint1_base_yaw_id1" type="revolute">
 <?xml version="1.0"?>
-<robot name="packing_robot_motor_aligned">
+<robot name="packing_robot_skeleton_g_pose_ik_final_limited">
 
-  <!-- ====================================================== -->
-  <!-- BASE LINK -->
-  <!-- ====================================================== -->
+  <!--
+    IK calculation URDF with ㄱ-shape default pose and final joint limits.
+    Unit: meter
+
+    Confirmed motor positive directions:
+    - deg1  Base     : positive = counterclockwise
+    - deg23 Shoulder : positive = forward
+    - deg45 Elbow    : positive = folding
+    - deg6  Wrist    : positive = downward
+    - deg7  Gripper  : positive = counterclockwise
+
+    Confirmed motor logical limits:
+    - deg1  Base     : -180 ~ +180 deg
+    - deg23 Shoulder : -90  ~ +90  deg
+    - deg45 Elbow    : 0    ~ 110  deg
+    - deg6  Wrist    : 0    ~ 220  deg
+    - deg7  Gripper  : 0    ~ 220  deg
+
+    ㄱ-pose motor origin:
+    - deg1  = 0
+    - deg23 = 60
+    - deg45 = 40
+    - deg6  = 110
+    - deg7  = 0
+
+    Dimensions:
+    - Ground -> Base reference height : 0.095 m
+    - Base -> Shoulder                : 0.040 m
+    - Shoulder -> Elbow               : 0.120 m
+    - Elbow -> Gripper joint          : 0.160 m
+    - Gripper length                  : 0.060 m
+  -->
+
   <link name="base_link">
     <visual>
-      <origin xyz="0 0 0.0325"/>
-      <geometry>
-        <box size="0.125 0.125 0.065"/>
-      </geometry>
-      <material name="gray">
-        <color rgba="0.5 0.5 0.5 1.0"/>
-      </material>
+      <origin xyz="0 0 0.0475"/>
+      <geometry><box size="0.080 0.080 0.095"/></geometry>
+      <material name="gray"><color rgba="0.5 0.5 0.5 1"/></material>
     </visual>
     <collision>
-      <origin xyz="0 0 0.0325"/>
-      <geometry>
-        <box size="0.125 0.125 0.065"/>
-      </geometry>
+      <origin xyz="0 0 0.0475"/>
+      <geometry><box size="0.080 0.080 0.095"/></geometry>
     </collision>
-    <inertial>
-      <origin xyz="0 0 0.0325"/>
-      <mass value="0.32"/>
-      <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
-    </inertial>
   </link>
 
-  <!-- ====================================================== -->
-  <!-- ID1 BASE YAW CHILD LINK -->
-  <!-- ====================================================== -->
-  <link name="link1_shoulder_mount">
+  <link name="link1_base_to_shoulder">
     <visual>
-      <origin xyz="0 0 0.02"/>
-      <geometry>
-        <box size="0.125 0.125 0.04"/>
-      </geometry>
-      <material name="dark_gray">
-        <color rgba="0.3 0.3 0.3 1.0"/>
-      </material>
+      <origin xyz="0 0 0.020"/>
+      <geometry><box size="0.040 0.040 0.040"/></geometry>
+      <material name="dark_gray"><color rgba="0.3 0.3 0.3 1"/></material>
     </visual>
     <collision>
-      <origin xyz="0 0 0.02"/>
-      <geometry>
-        <box size="0.125 0.125 0.04"/>
-      </geometry>
+      <origin xyz="0 0 0.020"/>
+      <geometry><box size="0.040 0.040 0.040"/></geometry>
     </collision>
-    <inertial>
-      <origin xyz="0 0 0.02"/>
-      <mass value="0.39"/>
-      <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
-    </inertial>
   </link>
 
   <joint name="joint1_base_yaw_id1" type="revolute">
-<parent link="base_link"/>
-<child link="link1_shoulder_mount"/>
-<origin xyz="0 0 0.065"/>
-<axis xyz="0 0 1"/>
-</joint>
-    <limit lower="-3.14159" upper="3.14159" effort="20" velocity="2.0"/>
+    <parent link="base_link"/>
+    <child link="link1_base_to_shoulder"/>
+    <origin xyz="0 0 0.095" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.141593" upper="3.141593" effort="20" velocity="2.0"/>
   </joint>
 
-  <!-- ====================================================== -->
-  <!-- ID2 / ID3 SHOULDER PAIR LINK -->
-  <!-- 실제 Shoulder -> Elbow 길이 약 171 mm 반영 -->
-  <!-- ====================================================== -->
-  <link name="link2_upper_arm">
+  <link name="link23_shoulder_to_elbow">
     <visual>
-      <origin xyz="0 0 0.0855"/>
-      <geometry>
-        <box size="0.0485 0.045 0.171"/>
-      </geometry>
-      <material name="blue_gray">
-        <color rgba="0.35 0.45 0.55 1.0"/>
-      </material>
+      <origin xyz="0 0 0.060"/>
+      <geometry><box size="0.025 0.025 0.120"/></geometry>
+      <material name="blue_gray"><color rgba="0.35 0.45 0.55 1"/></material>
     </visual>
     <collision>
-      <origin xyz="0 0 0.0855"/>
-      <geometry>
-        <box size="0.0485 0.045 0.171"/>
-      </geometry>
+      <origin xyz="0 0 0.060"/>
+      <geometry><box size="0.025 0.025 0.120"/></geometry>
     </collision>
-    <inertial>
-      <origin xyz="0 0 0.0855"/>
-      <mass value="0.31"/>
-      <inertia ixx="0.002" ixy="0" ixz="0" iyy="0.002" iyz="0" izz="0.001"/>
-    </inertial>
   </link>
 
-<joint name="joint23_shoulder_pair_id2_id3" type="revolute">
   <joint name="joint23_shoulder_pair_id2_id3" type="revolute">
-<parent link="link1_shoulder_mount"/>
-<child link="link2_upper_arm"/>
-<origin xyz="0 -0.016 0.04"/>
-<axis xyz="1 0 0"/>
-</joint>
-    <limit lower="-1.5708" upper="1.5708" effort="15" velocity="1.5"/>
+    <parent link="link1_base_to_shoulder"/>
+    <child link="link23_shoulder_to_elbow"/>
+    <origin xyz="0 0 0.040" rpy="1.047198 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-0.523599" upper="2.617994" effort="15" velocity="1.5"/>
   </joint>
 
-<joint name="joint45_elbow_pair_id4_id5" type="revolute">
-  <!-- ====================================================== -->
-  <!-- ID4 / ID5 ELBOW PAIR LINK -->
-  <!-- 실제 Elbow -> Wrist 길이 약 230 mm 반영 -->
-  <!-- ====================================================== -->
-  <link name="link45_forearm">
+  <link name="link45_elbow_to_wrist">
     <visual>
-      <origin xyz="0 0 0.115"/>
-      <geometry>
-        <box size="0.041 0.033 0.230"/>
-      </geometry>
-      <material name="steel">
-        <color rgba="0.45 0.45 0.45 1.0"/>
-      </material>
+      <origin xyz="0 0 0.080"/>
+      <geometry><box size="0.022 0.022 0.160"/></geometry>
+      <material name="steel"><color rgba="0.45 0.45 0.45 1"/></material>
     </visual>
     <collision>
-      <origin xyz="0 0 0.115"/>
-      <geometry>
-        <box size="0.041 0.033 0.230"/>
-      </geometry>
+      <origin xyz="0 0 0.080"/>
+      <geometry><box size="0.022 0.022 0.160"/></geometry>
     </collision>
-    <inertial>
-      <origin xyz="0 0 0.115"/>
-      <mass value="0.54"/>
-      <inertia ixx="0.004" ixy="0" ixz="0" iyy="0.004" iyz="0" izz="0.001"/>
-    </inertial>
   </link>
 
   <joint name="joint45_elbow_pair_id4_id5" type="revolute">
-<parent link="link2_upper_arm"/>
-<child link="link45_forearm"/>
-    <origin xyz="0 0 0.12"/>
-    <origin xyz="0 0 0.171"/>
-<axis xyz="1 0 0"/>
-</joint>
-    <limit lower="-1.5708" upper="1.5708" effort="15" velocity="1.5"/>
+    <parent link="link23_shoulder_to_elbow"/>
+    <child link="link45_elbow_to_wrist"/>
+    <origin xyz="0 0 0.120" rpy="0.698132 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-0.698132" upper="1.221730" effort="15" velocity="1.5"/>
   </joint>
 
-  <!-- ====================================================== -->
-  <!-- ID6 WRIST LINK -->
-  <!-- Wrist -> TCP 근처 길이 약 133 mm 반영 -->
-  <!-- ====================================================== -->
-  <link name="link6_wrist">
+  <link name="link6_wrist_to_gripper_joint">
     <visual>
-      <origin xyz="0 0 0.0665"/>
-      <geometry>
-        <box size="0.078 0.026 0.133"/>
-      </geometry>
-      <material name="black">
-        <color rgba="0.05 0.05 0.05 1.0"/>
-      </material>
+      <origin xyz="0 0 0.030"/>
+      <geometry><box size="0.020 0.020 0.060"/></geometry>
+      <material name="black"><color rgba="0.05 0.05 0.05 1"/></material>
     </visual>
     <collision>
-      <origin xyz="0 0 0.0665"/>
-      <geometry>
-        <box size="0.078 0.026 0.133"/>
-      </geometry>
+      <origin xyz="0 0 0.030"/>
+      <geometry><box size="0.020 0.020 0.060"/></geometry>
     </collision>
-    <inertial>
-      <origin xyz="0 0 0.0665"/>
-      <mass value="0.08"/>
-      <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
-    </inertial>
   </link>
 
-<joint name="joint6_wrist_id6" type="revolute">
   <joint name="joint6_wrist_id6" type="revolute">
-<parent link="link45_forearm"/>
-<child link="link6_wrist"/>
-    <origin xyz="0 0 0.155"/>
-    <origin xyz="0 0 0.230"/>
-<axis xyz="1 0 0"/>
-</joint>
-    <limit lower="-2.6" upper="2.6" effort="12" velocity="1.5"/>
+    <parent link="link45_elbow_to_wrist"/>
+    <child link="link6_wrist_to_gripper_joint"/>
+    <origin xyz="0 0 0.160" rpy="1.919862 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-1.919862" upper="1.919862" effort="12" velocity="1.5"/>
   </joint>
 
-<joint name="joint7_gripper_rotation_id7" type="revolute">
-  <!-- ====================================================== -->
-  <!-- ID7 GRIPPER ROTATION / VACUUM GRIPPER LINK -->
-  <!-- ====================================================== -->
-  <link name="link7_gripper">
+  <link name="link7_gripper_tcp">
     <visual>
-      <origin xyz="0 -0.0325 0"/>
-      <geometry>
-        <box size="0.02 0.065 0.02"/>
-      </geometry>
-      <material name="red">
-        <color rgba="0.8 0.1 0.1 1.0"/>
-      </material>
+      <origin xyz="0 0 0.030"/>
+      <geometry><box size="0.015 0.015 0.060"/></geometry>
+      <material name="red"><color rgba="0.8 0.1 0.1 1"/></material>
     </visual>
     <collision>
-      <origin xyz="0 -0.0325 0"/>
-      <geometry>
-        <box size="0.02 0.065 0.02"/>
-      </geometry>
+      <origin xyz="0 0 0.030"/>
+      <geometry><box size="0.015 0.015 0.060"/></geometry>
     </collision>
-    <inertial>
-      <origin xyz="0 -0.0325 0"/>
-      <mass value="0.03"/>
-      <inertia ixx="0.0002" ixy="0" ixz="0" iyy="0.0002" iyz="0" izz="0.0002"/>
-    </inertial>
   </link>
 
   <joint name="joint7_gripper_rotation_id7" type="revolute">
-<parent link="link6_wrist"/>
-<child link="link7_gripper"/>
-    <origin xyz="0.025 -0.013 0.06"/>
-    <origin xyz="0.025 -0.013 0.133"/>
-<axis xyz="0 1 0"/>
-</joint>
-    <limit lower="-3.14159" upper="3.14159" effort="20" velocity="2.0"/>
+    <parent link="link6_wrist_to_gripper_joint"/>
+    <child link="link7_gripper_tcp"/>
+    <origin xyz="0 0 0.060" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="0.000000" upper="3.839724" effort="20" velocity="2.0"/>
   </joint>
 
 </robot>
