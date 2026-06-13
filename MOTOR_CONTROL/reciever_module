@@ -30,7 +30,7 @@ def motor_control_receiver(q):
     큐 데이터 -> 3번 기준 Pick IK -> 4번 ACT_PICK
              -> 6번 기준 Place IK -> 7번 ACT_PLACE
     """
-    ik_solver = RobotIKController("mybot_motor_aligned.urdf")
+    ik_solver = RobotIKController("mybot.urdf")
     arm = RobotArm()
 
     if not arm.open_robot_port():
