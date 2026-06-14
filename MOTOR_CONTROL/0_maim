@@ -8,7 +8,7 @@ from ArUco import live_aruco_detection
 from py3Dbp import Item, LiveBin
 from receiver import motor_control_receiver
 from visualizer import BinVisualizer
-
+BIN_FLOOR_HEIGHT_MM = 0.0
 
 BOX_DATA = {
     1: {
@@ -44,7 +44,7 @@ BOX_DATA = {
 #   - bin 내부 좌표 (0,0,0) = bin 앞면 왼쪽 아래 모서리
 #   - bin 중심 = (100, 100, 100)
 # ============================================================
-BIN_DISTANCE_MM = 320.0   # 로봇 베이스에서 bin 앞면까지 거리 (mm)
+BIN_DISTANCE_MM = 130.0   # 로봇 베이스에서 bin 앞면까지 거리 (mm)
 BIN_WIDTH_MM    = 200.0   # bin 가로 크기
 BIN_DEPTH_MM    = 200.0   # bin 세로 크기
 
@@ -165,8 +165,8 @@ def main():
             d_top = spec["d"]
             h_now = spec["h"]
 
-            # Pick Z 보정
-            pick_coords[2] = 70.0 + h_now
+            # Pick Z 보정 (박스 높이만 사용, 60mm 오프셋 제거)
+            pick_coords[2] = h_now
 
             print("[MAIN] Pick Z 박스 높이 기반 보정 완료")
             print(f"[MAIN] Box Height : {h_now:.1f} mm")
@@ -183,9 +183,9 @@ def main():
             print("[MAIN] 적재 위치 계산 성공")
 
             # bin 내부 좌표 계산
-            gripper_lx = bin_system.W - (new_item.x + (new_item.w / 2))
-            gripper_ly = new_item.y + (new_item.d / 2)
-            gripper_lz = new_item.z + new_item.h
+            gripper_lx = new_item.x + (new_item.w / 2)  # 왼쪽부터 적재
+            gripper_ly = BIN_DEPTH_MM - (new_item.y + (new_item.d / 2))  # 뒤쪽부터 적재
+            gripper_lz = new_item.z + new_item.h + BIN_FLOOR_HEIGHT_MM
 
             # 로봇 베이스 기준 좌표로 변환
             robot_x, robot_y, robot_z = bin_to_robot_coords(
