@@ -28,118 +28,160 @@ def parse_packet(packet_data):
     return label, pick, load, angle
 
 
-def execute_sequence_1_2_3_4_vac_2_6_7_vacoff(arm, ik_solver, label, pick, load):
-    """
-    실제 모터 연속 시퀀스.
-
-    순서:
-        1 : BASE
-        2 : PICK_READY
-        3 : PICK 기준 포즈
-        4 : ACT_PICK, Pick IK
-        VACUUM ON : 4번 포즈 도착 직후 흡착
-        2 : PICK_READY 복귀
-        6 : PLACE 기준 포즈, Base 90도
-        7 : ACT_PLACE, Place IK (하드코딩 제거 - IK 결과 그대로 사용)
-        VACUUM OFF : 7번 포즈 도착 직후 해제
-        복귀 : 초기 위치로 복귀
-    """
-
+def execute_sequence_1_2_3_4_vac_2_6_7_vacoff(arm, ik_solver, label, pick, load, angle):
     px, py, pz = pick
     lx, ly, lz = load
 
-    # Y축 카메라-로봇 오프셋 보정
-    py = py - 150.0
+    px = px - 13.3
+    py = py - 80
+    pz = pz + 80
 
-    print("\n[RECEIVER] 시퀀스 시작: 1-2-3-4-VAC_ON-2-6-7-VAC_OFF")
+    print("\n[RECEIVER] start: 1-2-3-4-VAC_ON-2-6-7-VAC_OFF")
 
-    print("\n[SEQ 1] BASE")
-    arm.pose_1_base()
-
-    print("\n[SEQ 2] PICK_READY")
+    print("\n[SEQ 1] PICK_READY")
     arm.pose_2_pick_ready()
+    time.sleep(0.5)
 
-    print("\n[SEQ 3] PICK IK ORIGIN")
+    print("\n[SEQ 2] PICK pose")
     arm.pose_3_go_to_place()
+    time.sleep(0.5)
 
-    print("\n[SEQ 4] ACT_PICK")
+    print("\n[SEQ 2-1] Base align to ArUco angle")
+    angle_normalized = angle % 360
+    if angle_normalized > 180:
+        angle_normalized -= 360
+    base_deg = angle_normalized
+    current_deg23 = arm.last_deg_23 if arm.last_deg_23 is not None else 50.0
+    current_deg45 = arm.last_deg_45 if arm.last_deg_45 is not None else 75.0
+    current_deg6  = arm.last_deg_6  if arm.last_deg_6  is not None else 110.0
+    arm.smooth_move_all_pose(base_deg, current_deg23, current_deg45, current_deg6, 0)
+    time.sleep(0.5)
+
+    print("\n[SEQ 3] ACT_PICK")
     pick_ik = ik_solver.calculate_pick_ik([px, py, pz])
+    pick_ik["deg7"] = 10.0 + angle_normalized
     arm.act_pick(box_type=label, ik_angles=pick_ik)
 
-    print("\n[VACUUM] 4번 포즈 도착 직후 ON")
+    print("\n[VACUUM ON]")
     arm.vacuum_on()
     time.sleep(0.3)
 
-    print("\n[SEQ 2] PICK_READY 복귀")
-    arm.pose_2_pick_ready()
+    print("\n[SEQ box] box up")
+    current_deg1  = arm.last_deg_1  if arm.last_deg_1  is not None else 0.0
+    current_deg6  = arm.last_deg_6  if arm.last_deg_6  is not None else 110.0
+    current_deg23 = arm.last_deg_23 if arm.last_deg_23 is not None else 64.0
+    current_deg45 = arm.last_deg_45 if arm.last_deg_45 is not None else 74.0
 
-    print("\n[SEQ 6] PLACE IK ORIGIN")
-    arm.pose_6_place_origin()
-    time.sleep(1.2)
-
-    place_origin_pose = arm.get_current_pose()
+    # box up: elbow 같이 펴기
+    arm.smooth_move_all_pose(current_deg1, 35.0, 120.0, current_deg6, 0)
+    time.sleep(0.3)
+    # Base만 90도로 회전 (Shoulder/Elbow 유지)
+    arm.smooth_move_all_pose(90.0, 35.0, 120.0, current_deg6, 0)
+    time.sleep(0.5)
 
     print("\n[SEQ 7] ACT_PLACE")
-    place_ik = ik_solver.calculate_place_ik(
-        [lx, ly, lz],
-        place_origin_pose_deg=place_origin_pose,
-    )
+    place_ik = ik_solver.calculate_place_ik([lx, ly, lz])
 
-    print(f"[PLACE IK 결과]")
+    print(f"[PLACE IK result]")
     print(f"  deg1  : {place_ik['deg1']:.1f}")
     print(f"  deg23 : {place_ik['deg23']:.1f}")
     print(f"  deg45 : {place_ik['deg45']:.1f}")
     print(f"  deg6  : {place_ik['deg6']:.1f}")
     print(f"  deg7  : {place_ik['deg7']:.1f}")
 
-    arm.act_place(ik_angles=place_ik)
+    # 1단계: Elbow 접고 Shoulder 세워서 뒤로 당김
+    arm.smooth_move_all_pose(
+        place_ik["deg1"],
+        place_ik["deg23"],
+        146.5,
+        place_ik["deg6"],
+        place_ik["deg7"],
+    )
+    time.sleep(0.8)
+    # 2단계: Shoulder 뒤로 당긴 상태로 Elbow 내리기
+    arm.smooth_move_all_pose(
+        place_ik["deg1"],
+        place_ik["deg23"] - 20.0,
+        place_ik["deg45"],
+        place_ik["deg6"],
+        place_ik["deg7"],
+    )
+    time.sleep(0.8)
+    # 3단계: Shoulder 목표 위치로
+    arm.smooth_move_all_pose(
+        place_ik["deg1"],
+        place_ik["deg23"],
+        place_ik["deg45"],
+        place_ik["deg6"],
+        place_ik["deg7"],
+    )
+    time.sleep(0.5)
 
-    print("\n[VACUUM] 7번 포즈 도착 직후 OFF")
+    print("\n[VACUUM OFF]")
     arm.vacuum_off()
     time.sleep(0.3)
 
-    print("\n[SEQ 복귀] 초기 위치로 복귀")
-    arm.return_to_initial()
+    current = arm.get_current_pose()
+    current_deg1  = current["deg1"]  if current["deg1"]  is not None else 90.0
+    current_deg23 = current["deg23"] if current["deg23"] is not None else 80.0
+    current_deg6  = current["deg6"]  if current["deg6"]  is not None else 110.0
+    current_deg7  = current["deg7"]  if current["deg7"]  is not None else 0.0
 
-    print("\n[RECEIVER] 시퀀스 완료")
+    print("\n[SEQ return 1] Elbow up")
+    arm.smooth_move_all_pose(current_deg1, current_deg23, 120.0, current_deg6, current_deg7)
+    time.sleep(0.5)
+
+    print("\n[SEQ return 2] Shoulder up")
+    arm.smooth_move_all_pose(current_deg1, 50.0, 120.0, current_deg6, current_deg7)
+    time.sleep(0.5)
+
+    print("\n[SEQ return 3] Wrist level + Base rotate")
+    arm.smooth_move_all_pose(0.0, 50.0, 120.0, 110.0, current_deg7)
+    time.sleep(0.5)
+
+    print("\n[SEQ return 4] pose_3")
+    arm.smooth_move_all_pose(0.0, 50.0, 75.0, 110.0, current_deg7)
+    time.sleep(0.5)
+
+    print("\n[SEQ return 5] PICK_READY")
+    arm.return_to_pick_ready()
+
+    print("\n[RECEIVER] sequence done")
 
 
 def motor_control_receiver(q):
-    """
-    Queue 데이터 수신 후 1-2-3-4-VAC_ON-2-6-7-VAC_OFF 시퀀스 실행.
-    """
     ik_solver = RobotIKController("mybot.urdf")
     arm = RobotArm()
 
     if not arm.open_robot_port():
-        print("[RECEIVER] 로봇 포트 연결 실패")
+        print("[RECEIVER] port open failed")
         return
 
     arm.save_initial_positions()
 
-    print("\n[RECEIVER] 가동 시작 - Queue 데이터 대기 중...")
+    print("\n[RECEIVER] ready - waiting for queue...")
 
     try:
         while True:
             if not q.empty():
                 packet_data = q.get()
-                print(f"\n[RECEIVER] Queue 수신: {packet_data}")
+                print(f"\n[RECEIVER] queue received: {packet_data}")
 
                 try:
                     label, pick, load, angle = parse_packet(packet_data)
                 except Exception as e:
-                    print(f"[RECEIVER] 패킷 오류: {e}")
+                    print(f"[RECEIVER] packet error: {e}")
                     continue
 
                 if label == "shutdown":
-                    print("[RECEIVER] 종료 명령 수신")
+                    print("[RECEIVER] shutdown received")
                     break
 
                 px, py, pz = pick
                 lx, ly, lz = load
 
                 print("\n" + "=" * 50)
-                print(f"[RECEIVER] 라벨: {label} | 각도: {angle:.1f}°")
+                print(f"[RECEIVER] label: {label} | angle: {angle:.1f}")
                 print(f"Pick: [{px:.1f}, {py:.1f}, {pz:.1f}] mm")
                 print(f"Load: [{lx:.1f}, {ly:.1f}, {lz:.1f}] mm")
                 print("=" * 50)
@@ -150,12 +192,13 @@ def motor_control_receiver(q):
                     label=label,
                     pick=pick,
                     load=load,
+                    angle=angle,
                 )
 
             time.sleep(0.01)
 
     except KeyboardInterrupt:
-        print("\n[RECEIVER] 사용자 중단")
+        print("\n[RECEIVER] interrupted")
 
     finally:
         try:
@@ -164,9 +207,9 @@ def motor_control_receiver(q):
             pass
 
         arm.close_robot()
-        print("[RECEIVER] 종료 완료")
+        print("[RECEIVER] done")
 
 
 if __name__ == "__main__":
-    print("이 파일은 multiprocessing.Process target으로 사용합니다.")
-    print("예: Process(target=motor_control_receiver, args=(q,)).start()")
+    print("use as multiprocessing.Process target")
+    print("ex: Process(target=motor_control_receiver, args=(q,)).start()")
