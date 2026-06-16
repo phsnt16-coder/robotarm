@@ -6,6 +6,7 @@ class Item:
         self.w, self.h, self.d = w, h, d
         self.weight = weight
         self.x = self.y = self.z = None
+        self.is_rotated = False
 
     def set_position(self, x, y, z):
         self.x, self.y, self.z = x, y, z
@@ -73,6 +74,7 @@ class LiveBin:
         x, y, z, rw, rh, rd, is_rotated = best_position
         item.w, item.h, item.d = rw, rh, rd
         item.set_position(x, y, z)
+        item.is_rotated = is_rotated
 
         self.placed_items.append(item)
         self.current_weight += item.weight
