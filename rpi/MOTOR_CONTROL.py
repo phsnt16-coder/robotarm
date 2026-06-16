@@ -1,3 +1,4 @@
+#모터 제어용 모듈
 from scservo_sdk import *
 import time
 import os
