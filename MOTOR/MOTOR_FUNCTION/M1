@@ -102,7 +102,7 @@ if not portHandler.setBaudRate(BAUD):
     print("Baudrate 실패")
     quit()
 
-print("구형 FT-SCS15 ID 4 제어 시작")
+print("구형 FT-SCS15 ID {SERVO_ID} 제어 시작")
 
 while True:
 
