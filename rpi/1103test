@@ -1,0 +1,133 @@
+"""Raspberry Pi VL53L8CX (I2C 0x29) independent ranging check.
+
+Install in active Python environment:
+    python3 -m pip install circuitpython-vl53lxcx adafruit-blinka
+Run:
+    python3 test_vl53l8cx_i2c.py
+
+Assumes LPn is already held high by the board / wiring.
+"""
+import time
+import statistics
+import sys
+from pathlib import Path
+import vl53lxcx
+
+# Work around the CircuitPython_VL53LxCX 0.0.5 firmware-path bug on
+# Raspberry Pi OS (e.g. directory python3.11 becomes python3).
+# This only changes the path lookup in the running process.
+FIRMWARE_DIR = Path(vl53lxcx.__file__).resolve().parent
+_original_find_file = vl53lxcx._find_file
+
+def _find_firmware_in_package(name, required_size):
+    path = FIRMWARE_DIR / Path(name).name
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Firmware not found: {path}\n"
+            "Download the matching firmware .bin from the official "
+            "sensebox/CircuitPython_VL53LxCX repository into this directory."
+        )
+    actual_size = path.stat().st_size
+    if actual_size != required_size:
+        raise ValueError(
+            f"Firmware file size mismatch: {path} "
+            f"({actual_size} bytes; expected {required_size})"
+        )
+    print(f"[PASS] Firmware located: {path} ({actual_size} bytes)")
+    return str(path)
+
+vl53lxcx._find_file = _find_firmware_in_package
+
+try:
+    import board
+    import busio
+    from vl53lxcx import (
+        VL53L8CX,
+        RESOLUTION_4X4,
+        DATA_DISTANCE_MM,
+        DATA_TARGET_STATUS,
+    )
+except ImportError as exc:
+    sys.exit(f"[IMPORT ERROR] {exc}\nInstall with: python3 -m pip install circuitpython-vl53lxcx adafruit-blinka")
+
+BASELINE_MM = 300.0
+DURATION_SECONDS = 15.0
+CENTER_ZONES = (5, 6, 9, 10)
+VALID_STATUSES = (5, 9)
+
+
+def main():
+    i2c = None
+    sensor = None
+    started = False
+    valid_readings = []
+    frames = 0
+    print("[TEST] VL53L8CX I2C-1 (0x29), 4x4 zones, 5Hz")
+    try:
+        i2c = busio.I2C(board.SCL, board.SDA, frequency=400_000)
+        # LPn is optional when the breakout board already keeps it high.
+        sensor = VL53L8CX(i2c, addr=0x29)
+        if not sensor.is_alive():
+            raise RuntimeError("No VL53L8CX response at I2C address 0x29")
+        chip_id = getattr(sensor, "_id", None)
+        print(f"[PASS] ToF chip responding at 0x29 (ID: 0x{chip_id:02X})")
+        if chip_id == 0x02:
+            print("[NOTICE] Driver identified VL53L5CX (not VL53L8CX); check module markings.")
+        elif chip_id == 0x0C:
+            print("[PASS] Driver identified VL53L8CX.")
+
+        print("[STEP] Uploading firmware / initializing sensor ...")
+        sensor.init()
+        print("[PASS] Sensor initialized")
+        sensor.resolution = RESOLUTION_4X4
+        sensor.ranging_freq = 5
+        sensor.start_ranging({DATA_DISTANCE_MM, DATA_TARGET_STATUS})
+        started = True
+        print("[PASS] Ranging started. Move an object beneath sensor. Ctrl+C to stop.")
+        end_time = time.monotonic() + DURATION_SECONDS
+
+        while time.monotonic() < end_time:
+            if not sensor.check_data_ready():
+                time.sleep(0.03)
+                continue
+            result = sensor.get_ranging_data()
+            frames += 1
+            d = result.distance_mm
+            s = result.target_status
+            values = [float(d[i]) for i in CENTER_ZONES
+                      if s[i] in VALID_STATUSES and d[i] > 0]
+            if not values:
+                print(f"[{frames:03d}] No valid center-zone targets; statuses={[s[i] for i in CENTER_ZONES]}")
+                continue
+            mm = statistics.median(values)
+            height = max(0.0, BASELINE_MM - mm)
+            valid_readings.append(mm)
+            print(f"[{frames:03d}] Distance={mm:7.1f} mm  Box height={height:6.1f} mm  valid zones={len(values)}/4")
+
+    except KeyboardInterrupt:
+        print("\n[STOP] User interrupted")
+    except Exception as exc:
+        print(f"\n[ERROR] {type(exc).__name__}: {exc}")
+        raise
+    finally:
+        if started and sensor is not None:
+            try:
+                sensor.stop_ranging()
+            except Exception as exc:
+                print(f"[WARN] Could not stop ranging cleanly: {exc}")
+        if i2c is not None:
+            try:
+                i2c.deinit()
+            except Exception:
+                pass
+        print(f"\n[RESULT] Frames={frames} valid={len(valid_readings)}")
+        if valid_readings:
+            print(f"         min={min(valid_readings):.1f} mm, max={max(valid_readings):.1f} mm, "
+                  f"avg={statistics.mean(valid_readings):.1f} mm")
+        else:
+            print("         No valid measurements. Check LPn/power/firmware/data status.")
+
+
+if __name__ == "__main__":
+    main()
+
