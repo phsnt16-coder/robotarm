@@ -1,0 +1,116 @@
+<?xml version="1.0"?>
+<robot name="packing_robot">
+
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 0.0475"/>
+      <geometry><box size="0.080 0.080 0.095"/></geometry>
+      <material name="gray"><color rgba="0.5 0.5 0.5 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.0475"/>
+      <geometry><box size="0.080 0.080 0.095"/></geometry>
+    </collision>
+  </link>
+
+  <link name="link1_base_to_shoulder">
+    <visual>
+      <origin xyz="0 0 0.020"/>
+      <geometry><box size="0.040 0.040 0.040"/></geometry>
+      <material name="dark_gray"><color rgba="0.3 0.3 0.3 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.020"/>
+      <geometry><box size="0.040 0.040 0.040"/></geometry>
+    </collision>
+  </link>
+
+  <joint name="joint1_base_yaw_id1" type="revolute">
+    <parent link="base_link"/>
+    <child link="link1_base_to_shoulder"/>
+    <origin xyz="0 0 0.135" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.141593" upper="3.141593" effort="20" velocity="2.0"/>
+  </joint>
+
+  <link name="link23_shoulder_to_elbow">
+    <visual>
+      <origin xyz="0 0 0.060"/>
+      <geometry><box size="0.025 0.025 0.120"/></geometry>
+      <material name="blue_gray"><color rgba="0.35 0.45 0.55 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.060"/>
+      <geometry><box size="0.025 0.025 0.120"/></geometry>
+    </collision>
+  </link>
+
+  <joint name="joint23_shoulder_pair_id2_id3" type="revolute">
+    <parent link="link1_base_to_shoulder"/>
+    <child link="link23_shoulder_to_elbow"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="-1 0 0"/>
+    <limit lower="-3.141593" upper="3.141593" effort="15" velocity="1.5"/>
+  </joint>
+
+  <link name="link45_elbow_to_wrist">
+    <visual>
+      <origin xyz="0 0 0.080"/>
+      <geometry><box size="0.022 0.022 0.160"/></geometry>
+      <material name="steel"><color rgba="0.45 0.45 0.45 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.080"/>
+      <geometry><box size="0.022 0.022 0.160"/></geometry>
+    </collision>
+  </link>
+
+  <joint name="joint45_elbow_pair_id4_id5" type="revolute">
+    <parent link="link23_shoulder_to_elbow"/>
+    <child link="link45_elbow_to_wrist"/>
+    <origin xyz="0 0 0.120" rpy="0 0 0"/>
+    <axis xyz="-1 0 0"/>
+    <limit lower="-3.141593" upper="3.141593" effort="15" velocity="1.5"/>
+  </joint>
+
+  <link name="link6_wrist_to_gripper_joint">
+    <visual>
+      <origin xyz="0 0 0.030"/>
+      <geometry><box size="0.020 0.020 0.065"/></geometry>
+      <material name="black"><color rgba="0.05 0.05 0.05 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.030"/>
+      <geometry><box size="0.020 0.020 0.065"/></geometry>
+    </collision>
+  </link>
+
+  <joint name="joint6_wrist_id6" type="revolute">
+    <parent link="link45_elbow_to_wrist"/>
+    <child link="link6_wrist_to_gripper_joint"/>
+    <origin xyz="0 0 0.160" rpy="0 0 0"/>
+    <axis xyz="-1 0 0"/>
+    <limit lower="-3.141593" upper="3.141593" effort="12" velocity="1.5"/>
+  </joint>
+
+  <link name="link7_gripper_tcp">
+    <visual>
+      <origin xyz="0 0 0.030"/>
+      <geometry><box size="0.015 0.015 0.060"/></geometry>
+      <material name="red"><color rgba="0.8 0.1 0.1 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.030"/>
+      <geometry><box size="0.015 0.015 0.060"/></geometry>
+    </collision>
+  </link>
+
+  <joint name="joint7_gripper_rotation_id7" type="revolute">
+    <parent link="link6_wrist_to_gripper_joint"/>
+    <child link="link7_gripper_tcp"/>
+    <origin xyz="0 0 0.065" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-3.141593" upper="3.141593" effort="20" velocity="2.0"/>
+  </joint>
+
+</robot>
