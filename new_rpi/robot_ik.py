@@ -122,32 +122,27 @@ class RobotIKController:
         wr = (self.JOINT_OFFSETS["deg6"] - mot6) if mot6 is not None else None
         return sh, el, wr
 
-    def calculate_pick_ik(self, pick_position_mm):
-        x_mm, y_mm, z_mm = map(float, pick_position_mm)
-        pick_z_mm = float(z_mm) + self.GRIPPER_TCP_LENGTH_MM
-        target_y = math.sqrt(x_mm**2 + y_mm**2)
-
-        print("\n[IK] PICK IK 계산")
-        print(f"[IK] Pick 상대좌표 mm : [{x_mm:.1f}, {y_mm:.1f}, {z_mm:.1f}]")
-        print(f"[IK] TCP 보정 없음    : [{x_mm:.1f}, {y_mm:.1f}, {pick_z_mm:.1f}]")
-
-        sh, el, wr, err = self.solve_ik(
-            target_y, pick_z_mm,
-            hint_sh=45.0, hint_el=30.0
-        )
-        mot23, mot45, mot6 = self.bend_to_motor(sh, el, wr)
-        mot1 = math.degrees(math.atan2(x_mm, y_mm))
-
-        angles = {
-            "deg1":  mot1,
-            "deg23": self.clamp(mot23, self.SERVO_MIN_DEG, self.SERVO_MAX_DEG),
-            "deg45": self.clamp(mot45, self.SERVO_MIN_DEG, self.SERVO_MAX_DEG),
-            "deg6":  self.clamp(mot6,  self.SERVO_MIN_DEG, self.SERVO_MAX_DEG),
-            "deg7":  0.0,
-        }
-
-        print(f"\n[IK] PICK 모터 각도 (FK오차={err:.1f}mm)")
+    def calculate_pick_lut(self, pick_position_mm, *, shoulder_mode="raw"):
+        from pick_ik_lookup import PickIKLookup
+        if not hasattr(self, '_pick_lut'):
+            self._pick_lut = PickIKLookup()
+        result = self._pick_lut.solve(pick_position_mm, shoulder_mode=shoulder_mode)
+        self.last_pick_result = result
+        angles = dict(result['angles'])
+        self.validate_output_range(angles)
+        print('[IK] PICK LUT:', result['xyz_mm'], result['classification'])
+        print('[IK] PICK LUT contributors:', result['contributors'])
+        for warning in result['warnings']:
+            print('[IK/주의]', warning)
         self.print_motor_angles(angles)
+        return angles
+
+    def calculate_pick_ik(self, pick_position_mm):
+        """Actual Pick: measured LUT only; never fall back to analytic IK."""
+        self.last_pick_valid = False
+        self.last_pick_result = None
+        angles = self.calculate_pick_lut(pick_position_mm)
+        self.last_pick_valid = True
         return angles
 
     def calculate_place_ik(self, converted_place_position_mm, *,
@@ -178,6 +173,32 @@ class RobotIKController:
             print("[IK 주의]", warning)
         self.print_motor_angles(result.angles)
         return dict(result.angles)
+
+    def operational_place_ik(self, top_xyz_mm):
+        """Base XY and bin-floor suction height. No Z projection or TCP offset."""
+        from place_ik_lookup import PlaceIKLookup
+        requested = tuple(map(float,top_xyz_mm))
+        try:
+            if not hasattr(self, '_place_lut'):
+                self._place_lut = PlaceIKLookup()
+            result = self._place_lut.solve_operational(requested)
+            angles = dict(result.angles)
+            angles["deg7"] = max(0.0, angles["deg7"])
+            self.validate_output_range(angles)
+            self.last_place_result = result
+            print('[IK] PLACE 윗면 LUT 목표:', requested)
+            print('[IK] PLACE 분류:',result.classification)
+            if 50 < requested[2] < 100:
+                t=(requested[2]-50)/50
+                print(f'[IK] Z 보간: 1F={1-t:.4f}, 2F={t:.4f}')
+            self.print_motor_angles(angles)
+            return {'status':'ok','angles':angles,'requested_xyz_mm':list(requested),
+                'projected_xyz_mm':list(result.xyz_mm),'z_difference_mm':0.0,
+                'classification':result.classification,'region':result.region,
+                'contributors':[list(v) for v in result.contributors],
+                'warnings':list(result.warnings),'nearest_xy_mm':result.nearest_distance_mm}
+        except (ValueError,FileNotFoundError) as exc:
+            return {'status':'blocked','error':str(exc),'requested_xyz_mm':list(requested)}
 
     def preview_place_ik(self, box_center_mm):
         """Preview-only angles for measured XY, even when requested Z is unmeasured.
@@ -264,15 +285,12 @@ if __name__ == "__main__":
     ik = RobotIKController()
 
     print("\n=== Pick IK 테스트 ===")
-    pick = ik.calculate_pick_ik([-13.7, 264.2, 50.0])
-    print(f"실측: deg23=60.4  deg45=64.1")
+    pick = ik.calculate_pick_ik([350.0, 55.0, 110.0])
+    print("실측: deg23=44.95  deg45=53.98")
 
     print("\n=== Place IK 테스트 ===")
     # CSV의 정확한 실측 중앙좌표를 사용한 1F 예시
     place = ik.calculate_place_ik([55.0, -235.0, 50.0])
 
-    print("\n=== FK 검증 ===")
-    for name, a in [("Pick", pick)]:
-        Y, Z = ik.verify_fk(a['deg23'], a['deg45'], a['deg6'])
-        print(f"{name}: Y={Y:.1f} Z={Z:.1f}mm")
-    print("Place 관절각은 실측 LUT 값으로, 기존 평면 FK 공식의 정확도로 검증할 수 없습니다.")
+    print("Pick/Place LUT 관절각은 기존 평면 FK 공식으로 검증하지 않습니다.")
+
