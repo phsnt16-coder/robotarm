@@ -1,5 +1,8 @@
 from pathlib import Path
 import time
+import json
+import traceback
+import math
 
 import cv2
 import numpy as np
@@ -12,18 +15,23 @@ from picamera2 import Picamera2
 
 WIDTH = 3280
 HEIGHT = 2464
+PREVIEW_SCALE = 0.25
+PREVIEW_WIDTH = 820
+PREVIEW_HEIGHT = 616
+CAMERA_FORMAT = "BGR888"
 
-BACKGROUND_PATH = Path("background.png")
+BACKGROUND_PATH = Path(__file__).resolve().parent / "background.png"
+CAMERA_SETTINGS_PATH = BACKGROUND_PATH.with_name("camera_settings.json")
 
 
 # =========================================================
-# 확정 ROI
+# ROI (현재 사용 중인 좌표 유지)
 # =========================================================
 
-ROI_X1 = 982
+ROI_X1 = 700
 ROI_Y1 = 515
-ROI_X2 = 2009
-ROI_Y2 = 1728
+ROI_X2 = 2200
+ROI_Y2 = 2050
 
 ROI_WIDTH = ROI_X2 - ROI_X1
 ROI_HEIGHT = ROI_Y2 - ROI_Y1
@@ -33,7 +41,7 @@ ROI_HEIGHT = ROI_Y2 - ROI_Y1
 # 픽셀 → mm 변환값
 # =========================================================
 
-MM_PER_PIXEL = 0.159489
+MM_PER_PIXEL = 0.11660594  # 190 mm 실측 기준
 
 
 
@@ -178,11 +186,11 @@ def calculate_box_height(distance_mm):
 
 # 차영상 이진화 기준값
 # 박스가 잘 안 보이면 낮추고, 노이즈가 많으면 높이세요.
-DIFF_THRESHOLD = 25
+DIFF_THRESHOLD = 20
 
 # ROI 내 검출 대상 면적 범위
 MIN_AREA = 6000
-MAX_AREA = 1000000  # 8MP ROI: 기존 250000은 실제 상자(약 732459 px²)를 제외함
+MAX_AREA = int(ROI_WIDTH * ROI_HEIGHT * 0.85)  # ROI 면적 기반
 
 # contour가 사각형 영역을 얼마나 채우는지 판단
 MIN_FILL_RATIO = 0.65
@@ -228,6 +236,102 @@ def normalize_rect(rect):
     )
 
 
+# RANSAC 비교용: 원본 픽셀 기준, 상자 실제 규격을 하드코딩하지 않음.
+RANSAC_TOL_MM = 1.0
+RANSAC_TRIALS = 64
+RANSAC_MIN_INLIER = 0.40
+RANSAC_USE_FOR_OUTPUT = False  # 기본은 기존 방식; t 키로 전환
+
+
+def robust_box_fit(contour, rect):
+    """Four robust side lines; returns None if quadrilateral is unreliable."""
+    p = np.asarray(contour, dtype=np.float64).reshape(-1, 2)
+    if len(p) < 40:
+        return None
+    # minAreaRect supplies only a coarse orientation and side neighborhoods.
+    corners = cv2.boxPoints(rect).astype(np.float64)
+    edges = np.roll(corners, -1, axis=0) - corners
+    lengths = np.linalg.norm(edges, axis=1)
+    if min(lengths) < 30:
+        return None
+    directions = edges / lengths[:, None]
+    normals = np.column_stack((-directions[:, 1], directions[:, 0]))
+    distances = np.abs(np.sum((p[:, None, :] - corners[None, :, :]) * normals[None, :, :], axis=2))
+    assignment = np.argmin(distances, axis=1)
+    tol = max(2.0, RANSAC_TOL_MM / MM_PER_PIXEL)
+    rng = np.random.default_rng(42)
+    lines, scores = [], []
+    for i in range(4):
+        along = (p - corners[i]) @ directions[i]
+        # Avoid corner defects and adjacent sides; allow inward offsets.
+        use = ((assignment == i) & (along >= 0.10 * lengths[i]) &
+               (along <= 0.90 * lengths[i]) & (distances[:, i] <= 0.25 * min(lengths)))
+        q = p[use]
+        if len(q) < 20:
+            return None
+        if len(q) > 800:
+            q = q[np.linspace(0, len(q)-1, 800).astype(int)]
+        best = None
+        for _ in range(RANSAC_TRIALS):
+            a, b = q[rng.integers(len(q), size=2)]
+            d = b - a
+            length = np.linalg.norm(d)
+            if length < 0.20 * lengths[i]:
+                continue
+            d /= length
+            if abs(d @ directions[i]) < math.cos(math.radians(15)):
+                continue
+            n = np.array([-d[1], d[0]])
+            mask = np.abs((q-a) @ n) <= tol
+            count = int(mask.sum())
+            if count < 20:
+                continue
+            span = np.ptp(q[mask] @ directions[i]) / lengths[i]
+            if span < 0.40:
+                continue
+            score = (count, span)
+            if best is None or score > best[0]:
+                best = (score, mask)
+        if best is None or best[0][0] / len(q) < RANSAC_MIN_INLIER:
+            return None
+        inliers = q[best[1]]
+        center = inliers.mean(axis=0)
+        _, _, vh = np.linalg.svd(inliers-center, full_matrices=False)
+        d = vh[0]
+        if abs(d @ directions[i]) < math.cos(math.radians(15)):
+            return None
+        n = np.array([-d[1], d[0]])
+        lines.append((n, float(n @ center)))
+        scores.append(len(inliers)/len(q))
+    vertices = []
+    for i in range(4):
+        n1, c1 = lines[i-1]
+        n2, c2 = lines[i]
+        mat = np.stack((n1, n2))
+        if abs(np.linalg.det(mat)) < 0.70:
+            return None
+        vertices.append(np.linalg.solve(mat, [c1, c2]))
+    quad = np.asarray(vertices)
+    if not np.isfinite(quad).all() or not cv2.isContourConvex(quad.astype(np.float32)):
+        return None
+    side_vectors = np.roll(quad, -1, axis=0) - quad
+    side_lengths = np.linalg.norm(side_vectors, axis=1)
+    if np.any(side_lengths < 0.60 * lengths) or np.any(side_lengths > 1.20 * lengths):
+        return None
+    if np.any(quad[:, 0] < 0) or np.any(quad[:, 0] >= ROI_WIDTH) or np.any(quad[:, 1] < 0) or np.any(quad[:, 1] >= ROI_HEIGHT):
+        return None
+    # Fit actual quadrilateral, not another bounding rectangle.
+    # Opposite sides are averaged; angle follows original long-side convention.
+    pair = np.array([(side_lengths[0]+side_lengths[2])/2, (side_lengths[1]+side_lengths[3])/2])
+    k = int(np.argmax(pair))
+    d = side_vectors[k]/side_lengths[k] - side_vectors[k+2]/side_lengths[k+2]
+    angle = (math.degrees(math.atan2(d[1], d[0])) + 90) % 180 - 90
+    cx, cy = quad.mean(axis=0)
+    return {"quad": quad, "center": (float(cx), float(cy)),
+            "w": float(pair[k]), "d": float(pair[1-k]), "angle": angle,
+            "support": min(scores)}
+
+
 def load_background():
     """
     background.png를 불러오고 카메라 해상도에 맞춥니다.
@@ -242,17 +346,12 @@ def load_background():
         )
 
     if background.shape[:2] != (HEIGHT, WIDTH):
-        print(
-            f"[WARNING] 배경 크기 변경: "
-            f"{background.shape[1]}x{background.shape[0]} "
-            f"→ {WIDTH}x{HEIGHT}"
+        raise RuntimeError(
+            f"배경 해상도 {background.shape[1]}x{background.shape[0]} 불일치: "
+            f"{WIDTH}x{HEIGHT}로 빈 컨베이어를 다시 촬영하세요."
         )
-
-        background = cv2.resize(
-            background,
-            (WIDTH, HEIGHT),
-            interpolation=cv2.INTER_LINEAR,
-        )
+    if not (0 <= ROI_X1 < ROI_X2 <= WIDTH and 0 <= ROI_Y1 < ROI_Y2 <= HEIGHT):
+        raise ValueError("ROI 좌표가 원본 영상 범위를 벗어났습니다.")
 
     background_roi = background[
         ROI_Y1:ROI_Y2,
@@ -265,23 +364,54 @@ def load_background():
     return background, background_roi
 
 
+def apply_fixed_exposure(picam2, settings=None):
+    """Apply the identical settings used for the background capture."""
+    if settings is None:
+        settings = json.loads(CAMERA_SETTINGS_PATH.read_text(encoding="utf-8"))
+    fixed = {
+        "AeEnable": False,
+        "AwbEnable": False,
+        "ExposureTime": int(settings["ExposureTime"]),
+        "AnalogueGain": float(settings["AnalogueGain"]),
+        "Contrast": float(settings["Contrast"]),
+        "ColourGains": tuple(map(float, settings["ColourGains"])),
+    }
+    picam2.set_controls(fixed)
+    time.sleep(1.0)
+    # Allow queued frames from the prior auto exposure to drain.
+    for _ in range(6):
+        metadata = picam2.capture_metadata()
+    print("[CAMERA] 요청 설정:", fixed)
+    print("[CAMERA] 실제 설정:", {k: metadata.get(k) for k in
+          ("ExposureTime", "AnalogueGain", "ColourGains", "DigitalGain")})
+    exposure = metadata.get("ExposureTime")
+    gain = metadata.get("AnalogueGain")
+    if exposure is not None and abs(exposure - fixed["ExposureTime"]) > max(150, fixed["ExposureTime"] * 0.1):
+        print("[CAMERA WARNING] 실제 노출이 요청값과 다릅니다.")
+    if gain is not None and abs(gain - fixed["AnalogueGain"]) > max(0.15, fixed["AnalogueGain"] * 0.1):
+        print("[CAMERA WARNING] 실제 Gain이 요청값과 다릅니다.")
+    return fixed
+
+
 def create_camera():
     """
     Picamera2를 초기화합니다.
     """
 
+    print("[CAMERA] 초기화 시작", flush=True)
     picam2 = Picamera2()
 
     config = picam2.create_preview_configuration(
         main={
             "size": (WIDTH, HEIGHT),
-            "format": "RGB888",
+            "format": CAMERA_FORMAT,
         },
         buffer_count=4,
     )
 
     picam2.configure(config)
     picam2.start()
+    print("[CAMERA] 스트리밍 시작", flush=True)
 
     return picam2
 
@@ -354,7 +484,43 @@ def live_outline_detection(picam2):
     print("진단 사진 저장: c (원본/ROI/Raw Mask/검출 결과)")
     print("========================================")
 
-    background_full, background_roi = load_background()
+    camera_format = picam2.camera_configuration()["main"]["format"]
+    if camera_format != CAMERA_FORMAT:
+        raise RuntimeError(f"카메라 포맷 {camera_format} 불일치: {CAMERA_FORMAT}로 설정하세요.")
+    # 파일이 없거나 이전 설정이 잘못된 경우에도 미리보기는 실행한다.
+    background_ready = False
+    cv2.namedWindow("Full Frame", cv2.WINDOW_AUTOSIZE)
+    def startup_preview():
+        frame = picam2.capture_array()
+        cv2.imshow("Full Frame", cv2.resize(frame, (PREVIEW_WIDTH, PREVIEW_HEIGHT),
+                                           interpolation=cv2.INTER_AREA))
+        cv2.waitKey(1)
+        return frame
+    startup_preview()
+    try:
+        fixed_settings = apply_fixed_exposure(picam2)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        print(f"[CAMERA WARNING] 설정 파일 사용 불가: {exc}", flush=True)
+        time.sleep(2)
+        metadata = picam2.capture_metadata()
+        gains = metadata.get("ColourGains")
+        if gains is None:
+            raise RuntimeError("ColourGains 확인 실패: 카메라 로그를 확인하세요.")
+        fixed_settings = apply_fixed_exposure(picam2, {
+            "ExposureTime": 5000, "AnalogueGain": 1.0,
+            "Contrast": 1.0, "ColourGains": gains,
+        })
+        print("[BACKGROUND] 빈 컨베이어에서 b를 눌러 배경을 등록하세요.", flush=True)
+    else:
+        try:
+            background_full, background_roi = load_background()
+            background_ready = True
+        except (RuntimeError, ValueError) as exc:
+            print(f"[BACKGROUND WARNING] {exc}", flush=True)
+    if not background_ready:
+        background_full = startup_preview().copy()
+        background_roi = background_full[ROI_Y1:ROI_Y2, ROI_X1:ROI_X2].copy()
+        print("[BACKGROUND] 임시 프레임 사용 중: b 등록 전 검출 확정 금지", flush=True)
 
     # 차영상 계산 전 작은 영상 노이즈만 완화
     background_blur = cv2.GaussianBlur(
@@ -365,8 +531,7 @@ def live_outline_detection(picam2):
 
     # 카메라는 main.py에서 초기화하여 전달받음 (중복 초기화 방지)
 
-    # 자동 노출 및 화이트밸런스 안정화 대기
-    time.sleep(2)
+    # 배경과 동일한 고정 노출 적용 완료
 
     # Raw Mask가 정확하므로 강한 morphology는 사용하지 않음
     minimal_close_kernel = cv2.getStructuringElement(
@@ -374,6 +539,9 @@ def live_outline_detection(picam2):
         (3, 3),
     )
 
+    use_robust = RANSAC_USE_FOR_OUTPUT
+    print("[FIT] t: minAreaRect/RANSAC 반환 모드 전환 (기본 minAreaRect)")
+    last_mask_log = 0.0
     last_print_time = 0.0
     last_distance_poll = 0.0
     distance_mm = None
@@ -403,18 +571,13 @@ def live_outline_detection(picam2):
 
             box_height_mm = calculate_box_height(distance_mm)
 
-            frame_rgb = picam2.capture_array()
-
-            frame = cv2.cvtColor(
-                frame_rgb,
-                cv2.COLOR_RGB2BGR,
-            )
-
+            # 배경 촬영 코드와 동일한 BGR888 스트림 배열을 그대로 사용.
+            # cv2.imwrite / imread로 저장한 배경과 채널 순서를 일치시킴.
+            frame = picam2.capture_array()
             if frame.shape[:2] != (HEIGHT, WIDTH):
-                frame = cv2.resize(
-                    frame,
-                    (WIDTH, HEIGHT),
-                    interpolation=cv2.INTER_LINEAR,
+                raise RuntimeError(
+                    f"카메라 해상도 {frame.shape[1]}x{frame.shape[0]} 불일치: "
+                    f"main.py 카메라를 {WIDTH}x{HEIGHT}로 설정하세요."
                 )
 
             roi = frame[
@@ -476,10 +639,20 @@ def live_outline_detection(picam2):
             contours, _ = cv2.findContours(
                 raw_mask.copy(),
                 cv2.RETR_EXTERNAL,
-                cv2.CHAIN_APPROX_SIMPLE,
+                cv2.CHAIN_APPROX_NONE,
             )
 
-            target = select_target_contour(contours)
+            white_ratio = cv2.countNonZero(raw_mask) / raw_mask.size
+            mask_overflow = white_ratio >= 0.90
+            now = time.monotonic()
+            if now - last_mask_log >= 1.0:
+                print(f"[MASK] white={white_ratio*100:.2f}% | "
+                      f"diff mean={gray_difference.mean():.1f} | "
+                      f"background mean={background_roi.mean():.1f} | live mean={roi.mean():.1f}")
+                if mask_overflow:
+                    print("[MASK WARNING] ROI 대부분이 전경입니다. 빈 컨베이어에서 b로 배경을 재저장하세요.")
+                last_mask_log = now
+            target = None if mask_overflow or not background_ready else select_target_contour(contours)
 
             latest_result = None
             if target is not None:
@@ -499,6 +672,11 @@ def live_outline_detection(picam2):
                     angle,
                 ) = normalize_rect(rect)
 
+                old_values = (center_x, center_y, width_px, height_px, angle)
+                robust = robust_box_fit(target_contour, rect)
+                if use_robust and robust is not None:
+                    center_x, center_y = robust["center"]
+                    width_px, height_px, angle = robust["w"], robust["d"], robust["angle"]
                 width_mm = width_px * MM_PER_PIXEL
                 height_mm = height_px * MM_PER_PIXEL
 
@@ -519,7 +697,7 @@ def live_outline_detection(picam2):
                 pick_y = (center_y - ROI_HEIGHT / 2.0) * MM_PER_PIXEL
                 # 센서 거리 자체가 아니라 상자 상면의 컨베이어 기준 높이.
                 # 유효한 높이 없으면 a 키로 확정할 수 없음.
-                if box_height_mm is not None and box_height_mm > 0:
+                if box_height_mm is not None and box_height_mm > 0 and (not use_robust or robust is not None):
                     latest_result = (
                         round(float(angle), 2),
                         [round(float(pick_x), 2), round(float(pick_y), 2), round(float(box_height_mm), 2)],
@@ -547,6 +725,13 @@ def live_outline_detection(picam2):
                     (0, 255, 0),
                     3,
                 )
+
+                # RANSAC quadrilateral: orange, existing rectangle: green.
+                if robust is not None:
+                    robust_points = np.rint(robust["quad"]).astype(np.int32)
+                    cv2.polylines(detection_view, [robust_points], True, (0, 165, 255), 4)
+                    robust_global = robust_points + np.array([ROI_X1, ROI_Y1], dtype=np.int32)
+                    cv2.polylines(full_view, [robust_global], True, (0, 165, 255), 4)
 
                 # 중심점
                 cv2.circle(
@@ -609,6 +794,12 @@ def live_outline_detection(picam2):
                     ),
                 ]
 
+                text_lines.append(f"minRect W/D: {old_values[2]*MM_PER_PIXEL:.1f}/{old_values[3]*MM_PER_PIXEL:.1f}")
+                if robust is not None:
+                    text_lines.append(f"RANSAC W/D: {robust['w']*MM_PER_PIXEL:.1f}/{robust['d']*MM_PER_PIXEL:.1f}")
+                else:
+                    text_lines.append("RANSAC: rejected")
+                text_lines.append("Output: " + ("RANSAC" if use_robust else "minAreaRect"))
                 for index, text in enumerate(text_lines):
                     cv2.putText(
                         detection_view,
@@ -636,6 +827,14 @@ def live_outline_detection(picam2):
                         f"Area={contour_area:.0f}, Fill={fill_ratio:.2f}"
                     )
 
+                    print(f"[MIN_RECT] w={old_values[2]*MM_PER_PIXEL:.2f} mm, d={old_values[3]*MM_PER_PIXEL:.2f} mm, angle={old_values[4]:.2f}")
+                    if robust is not None:
+                        rx, ry = robust["center"]
+                        print(f"[RANSAC] w={robust['w']*MM_PER_PIXEL:.2f} mm, d={robust['d']*MM_PER_PIXEL:.2f} mm, "
+                              f"angle={robust['angle']:.2f}, center=({rx:.1f},{ry:.1f}), min_inlier={robust['support']:.2f}")
+                    else:
+                        print("[RANSAC] rejected: insufficient or inconsistent side lines")
+                    print("[FIT] output=" + ("RANSAC" if use_robust else "minAreaRect"))
                     last_print_time = current_time
 
             else:
@@ -649,6 +848,9 @@ def live_outline_detection(picam2):
                     2,
                 )
 
+            if not background_ready:
+                cv2.putText(full_view, "EMPTY conveyor: press b to register background",
+                            (40, 100), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 5)
             # 전체 화면 ROI 표시
             cv2.rectangle(
                 full_view,
@@ -656,6 +858,11 @@ def live_outline_detection(picam2):
                 (ROI_X2 - 1, ROI_Y2 - 1),
                 (0, 255, 255),
                 2,
+            )
+
+            cv2.drawMarker(
+                full_view, ((ROI_X1 + ROI_X2) // 2, (ROI_Y1 + ROI_Y2) // 2),
+                (0, 0, 255), cv2.MARKER_CROSS, 100, 8,
             )
 
             cv2.putText(
@@ -672,25 +879,37 @@ def live_outline_detection(picam2):
             # 5. 화면 표시
             # =================================================
 
-            cv2.imshow("Full Frame", full_view)
-            cv2.imshow("Detection", detection_view)
-            cv2.imshow("Difference", difference)
-            cv2.imshow("Gray Difference", gray_difference)
-            cv2.imshow("Raw Mask", raw_mask)
-            cv2.imshow(
-                "Minimal Corrected Mask",
-                minimal_corrected_mask,
-            )
+            # 화면 표시만 축소: 원본 ROI/마스크/좌표 계산 및 저장은 유지.
+            for name, view in (
+                ("Full Frame", full_view),
+                ("Detection", detection_view),
+                ("Difference", difference),
+                ("Gray Difference", gray_difference),
+                ("Raw Mask", raw_mask),
+                ("Minimal Corrected Mask", minimal_corrected_mask),
+            ):
+                preview = cv2.resize(
+                    view, None, fx=PREVIEW_SCALE, fy=PREVIEW_SCALE,
+                    interpolation=cv2.INTER_NEAREST if view.ndim == 2 else cv2.INTER_AREA,
+                )
+                cv2.imshow(name, preview)
 
             key = cv2.waitKey(1) & 0xFF
 
             if key == ord("q"):
                 return None
+            elif key == ord("t"):
+                use_robust = not use_robust
+                latest_result = None
+                print("[FIT] output=" + ("RANSAC" if use_robust else "minAreaRect"))
             elif key == ord("a"):
+                if not background_ready:
+                    print("[BACKGROUND] 빈 컨베이어에서 b를 먼저 누르세요.")
+                    continue
                 if latest_result is not None:
                     print(f"[Outline] 확정: {latest_result}")
                     return latest_result
-                print("[Outline] 유효한 박스/ToF 높이가 없습니다. 센서와 검출을 확인하세요.")
+                print("[Outline] 유효한 박스/ToF 높이 또는 선택한 RANSAC 결과가 없습니다.")
 
             # 빈 컨베이어 상태에서 b를 누르면 배경 재저장
             elif key == ord("b"):
@@ -700,6 +919,14 @@ def live_outline_detection(picam2):
                 )
 
                 if success:
+                    # 배경과 같은 노출 설정을 함께 저장
+                    try:
+                        CAMERA_SETTINGS_PATH.write_text(json.dumps(fixed_settings, indent=2), encoding="utf-8")
+                    except OSError as exc:
+                        background_ready = False
+                        print(f"[BACKGROUND ERROR] 설정 저장 실패: {exc}")
+                        continue
+                    background_ready = True
                     background_full = frame.copy()
 
                     background_roi = background_full[
@@ -837,15 +1064,24 @@ def live_outline_detection(picam2):
 
 def main():
     """outline.py 단독 실행용 진입점."""
+    print(f"[START] {Path(__file__).resolve()}", flush=True)
     camera = create_camera()
     try:
         result = live_outline_detection(camera)
         print("[Outline] 결과:", result)
     finally:
         camera.stop()
+        camera.close()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        traceback.print_exc()
+        raise SystemExit(1)
+
+
+
 
 
