@@ -28,17 +28,7 @@ NEW_ACC = 1
 
 INIT_DEG_6 = 110.0
 
-OFFSET_DEG_23 = 20.0
-
-PICK_READY_RAW_POS = {
-    ID_1: 0,
-    ID_2: 52,
-    ID_3: 979,
-    ID_4: 92,
-    ID_5: 933,
-    ID_6: 836,
-    ID_7: 42,
-}
+OFFSET_DEG_23 = 30.0
 
 SMOOTH_STEP_COUNT = 30
 SMOOTH_DELAY = 0.03
@@ -237,57 +227,53 @@ class RobotArm:
             else:
                 print(f"ID {sid} 초기 Position : 읽기 실패")
 
-    def return_to_initial(self):
-        print("\n===== 초기값으로 복귀 =====")
+    def reset(self):
+        print("\n===== POSE 9 : reset =====")
 
-        if self.init_pos.get(ID_1) is not None:
-            self.old_servo.WritePos(ID_1, self.init_pos[ID_1], 0, OLD_SPEED)
-            print(f"ID1 -> {self.init_pos[ID_1]}")
+        RESET_OFFSET_23 = -20.0
+        offset23 = round(RESET_OFFSET_23 * MAX_POS / MAX_DEG)
 
-        if self.init_pos.get(ID_2) is not None:
-            self.old_servo.WritePos(ID_2, self.init_pos[ID_2], 0, OLD_SPEED)
-            print(f"ID2 -> {self.init_pos[ID_2]}")
-
-        if self.init_pos.get(ID_3) is not None:
-            self.old_servo.WritePos(ID_3, self.init_pos[ID_3], 0, OLD_SPEED)
-            print(f"ID3 -> {self.init_pos[ID_3]}")
-
-        if self.init_pos.get(ID_4) is not None:
-            self.old_servo.WritePos(ID_4, self.init_pos[ID_4], OLD_TIME, OLD_SPEED)
-            print(f"ID4 -> {self.init_pos[ID_4]}")
-
-        if self.init_pos.get(ID_5) is not None:
-            self.old_servo.WritePos(ID_5, self.init_pos[ID_5], OLD_TIME, OLD_SPEED)
-            print(f"ID5 -> {self.init_pos[ID_5]}")
-
+        # 1단계: ID6 먼저 초기 위치 복귀
         if self.init_pos.get(ID_6) is not None:
-            self.old_servo.WritePos(ID_6, self.init_pos[ID_6], 0, OLD_SPEED)
+            self.old_servo.WritePos(
+                ID_6, self.init_pos[ID_6], 0, OLD_SPEED
+            )
             print(f"ID6 -> {self.init_pos[ID_6]}")
 
-        if self.init_pos.get(ID_7) is not None:
-            self.old_servo.WritePos(ID_7, self.init_pos[ID_7], 0, OLD_SPEED)
-            print(f"ID7 -> {self.init_pos[ID_7]}")
+        time.sleep(2.0)
 
-    def return_to_pick_ready(self):
-        print("\n===== PICK_READY 복귀 =====")
+        # 2단계: 나머지 모터 초기 위치 복귀
+        for sid in (ID_1, ID_2, ID_3, ID_4, ID_5, ID_7):
+            if self.init_pos.get(sid) is not None:
+                move_time = OLD_TIME if sid in (ID_4, ID_5) else 0
 
-        self.old_servo.WritePos(ID_1, PICK_READY_RAW_POS[ID_1], OLD_TIME, OLD_SPEED)
-        self.old_servo.WritePos(ID_2, PICK_READY_RAW_POS[ID_2], OLD_TIME, OLD_SPEED)
-        self.old_servo.WritePos(ID_3, PICK_READY_RAW_POS[ID_3], OLD_TIME, OLD_SPEED)
-        self.old_servo.WritePos(ID_4, PICK_READY_RAW_POS[ID_4], OLD_TIME, OLD_SPEED)
-        self.old_servo.WritePos(ID_5, PICK_READY_RAW_POS[ID_5], OLD_TIME, OLD_SPEED)
-        self.old_servo.WritePos(ID_7, PICK_READY_RAW_POS[ID_7], OLD_TIME, OLD_SPEED)
-        print("ID1~5, ID7 복귀 명령 완료")
+                pos = self.init_pos[sid]
+                if sid == ID_2:
+                    pos = clamp(pos + offset23, 0, MAX_POS)
+                elif sid == ID_3:
+                    pos = clamp(pos - offset23, 0, MAX_POS)
 
-        time.sleep(2.5)
-        self.old_servo.WritePos(ID_6, PICK_READY_RAW_POS[ID_6], OLD_TIME, OLD_SPEED)
-        print(f"ID6 -> {PICK_READY_RAW_POS[ID_6]}")
+                self.old_servo.WritePos(
+                    sid, pos, move_time, OLD_SPEED
+                )
+                print(f"ID{sid} -> {pos}")
 
-        self.last_deg_1  = pos_to_deg(PICK_READY_RAW_POS[ID_1])
-        self.last_deg_23 = pos_to_deg(PICK_READY_RAW_POS[ID_2])
-        self.last_deg_45 = pos_to_deg(PICK_READY_RAW_POS[ID_4])
-        self.last_deg_6  = pos_to_deg(PICK_READY_RAW_POS[ID_6])
-        self.last_deg_7  = pos_to_deg(PICK_READY_RAW_POS[ID_7])
+        # 초기 복귀 명령과 내부 보간 시작 각도를 동기화한다.
+        # 실제 복귀 완료 여부는 이 저장값만으로 확인할 수 없다.
+        for sid, attr in ((ID_1, "last_deg_1"), (ID_2, "last_deg_23"),
+                          (ID_4, "last_deg_45"), (ID_6, "last_deg_6"),
+                          (ID_7, "last_deg_7")):
+            pos = self.init_pos.get(sid)
+            if sid == ID_2 and pos is not None:
+                pos = clamp(pos + offset23, 0, MAX_POS)
+            deg = pos_to_deg(pos) if pos is not None else None
+            if sid == ID_2 and deg is not None:
+                # 현재 move_sync_2_3()의 OFFSET_DEG_23 변환을 역으로 적용.
+                deg -= OFFSET_DEG_23
+            setattr(self, attr, deg)
+
+        print("[RESET] 내부 각도 초기화 완료")
+        print("[RESET] Base 시작 각도:", self.last_deg_1)
 
     def move_single_1(self, deg):
         deg = clamp(float(deg), 0, MAX_DEG)
@@ -382,52 +368,73 @@ class RobotArm:
             self.move_all_pose(deg1, deg23, deg45, deg6, deg7)
             time.sleep(delay)
 
-    def pose_0_safety_check(self):
-        print("\n===== POSE 0 : SAFETY CHECK =====")
-        self.return_to_pick_ready()
+    def ready(self):
+        print("\n===== POSE Z : ready =====")
 
-    def pose_1_base(self):
-        print("\n===== POSE 1 : BASE =====")
-        self.return_to_pick_ready()
+        # ID1~6은 프로그램 시작 시 저장한 초기 위치 기준
+        if any(self.init_pos.get(sid) is None for sid in range(ID_1, ID_6 + 1)):
+            print("[오류] Z 포즈에 필요한 초기 위치가 없습니다.")
+            return False
 
-    def pose_2_pick_ready(self):
-        print("\n===== POSE 2 : PICK READY =====")
-        self.return_to_pick_ready()
+        # ID1도 실제 위치를 읽어 다음 보간의 시작 각도를 갱신한다.
+        # READY 자체에서는 Base 이동 명령을 보내지 않는다.
+        pos1 = self.read_old_position(ID_1)
+        if pos1 is None:
+            print("[오류] ID1 현재 위치 읽기 실패: 이전 Base 각도로 이동하지 않습니다.")
+            return False
+        self.last_deg_1 = pos_to_deg(pos1)
+        print(f"[READY] Base 유지 -> {pos1} / {self.last_deg_1:.2f} deg")
 
-    def pose_3_go_to_place(self):
-        print("\n===== POSE 3 : GO TO PLACE =====")
-        self.smooth_move_all_pose(0, 50, 100, INIT_DEG_6, 0)
+        # ID7은 Z 포즈 직전의 실제 위치를 읽어 유지
+        pos7 = self.read_old_position(ID_7)
+        if pos7 is None:
+            print("[오류] ID7 직전 위치 읽기 실패")
+            return False
 
-    def pose_5_rotation(self, target_deg1=45):
-        print("\n===== POSE 5 : ROTATION MODE =====")
+        # READY 고정 목표 각도 (초기 위치 기준 오프셋 미사용)
+        pos6 = deg_to_pos(150.0)
+        pos4 = deg_to_pos(50.0)
+        pos5 = reverse_pos(pos4)
+
+        for sid in (ID_2, ID_3):
+            self.old_servo.WritePos(sid, self.init_pos[sid], OLD_TIME, OLD_SPEED)
+        self.old_servo.WritePos(ID_4, pos4, OLD_TIME, OLD_SPEED)
+        self.old_servo.WritePos(ID_5, pos5, OLD_TIME, OLD_SPEED)
+        self.old_servo.WritePos(ID_6, pos6, OLD_TIME, OLD_SPEED)
+        # ID7은 새 이동 명령 없이 기존 위치 유지
+
+        self.last_deg_23 = pos_to_deg(self.init_pos[ID_2]) - OFFSET_DEG_23
+        self.last_deg_45 = pos_to_deg(pos4)
+        self.last_deg_6 = pos_to_deg(pos6)
+        self.last_deg_7 = pos_to_deg(pos7)
+        print(f"ID6 -> {pos6} / {self.last_deg_6:.2f} deg")
+        print(f"ID7 유지 -> {pos7} / {self.last_deg_7:.2f} deg")
+        return True
+
+
+
+
+
+    def rotation(self, target_deg1=90):
+        print("\n===== POSE 5 : rotation =====")
         target_deg23 = self.last_deg_23 if self.last_deg_23 is not None else 0
         target_deg45 = self.last_deg_45 if self.last_deg_45 is not None else 75
         target_deg6 = self.last_deg_6 if self.last_deg_6 is not None else INIT_DEG_6
         target_deg7 = self.last_deg_7 if self.last_deg_7 is not None else 0
         self.smooth_move_all_pose(target_deg1, target_deg23, target_deg45, target_deg6, target_deg7)
 
-    def rotation_mode(self, target_deg1=45):
-        return self.pose_5_rotation(target_deg1)
 
-    def pose_6_place_origin(self):
-        print("\n===== POSE 6 : PLACE IK ORIGIN =====")
-        current_deg23 = self.last_deg_23 if self.last_deg_23 is not None else 50.0
-        current_deg45 = self.last_deg_45 if self.last_deg_45 is not None else 75.0
-        current_deg6  = self.last_deg_6  if self.last_deg_6  is not None else 110.0
-        self.smooth_move_all_pose(90, current_deg23, current_deg45, current_deg6, 0)
-        time.sleep(0.5)
-        self.smooth_move_all_pose(90, 80.0, 50.0, INIT_DEG_6, 0)
 
-    def act_pick(self, box_type="A_1", ik_angles=None):
-        print("\n===== POSE 4 : ACT_PICK =====")
+    def pick_ik(self, box_type="A_1", ik_angles=None):
+        print("\n===== POSE 4 : pick_ik =====")
         if ik_angles is None:
-            print("[오류] ACT_PICK는 IK 값이 필요합니다.")
+            print("[오류] pick_ik는 IK 값이 필요합니다.")
             return False
 
         print(f"[대상 박스] {box_type}")
         print("[IK 사용] Pick IK 값으로 이동")
         print_pose_angles(
-            "ACT_PICK IK 각도",
+            "pick_ik IK 각도",
             ik_angles["deg1"],
             ik_angles["deg23"],
             ik_angles["deg45"],
@@ -443,15 +450,15 @@ class RobotArm:
         )
         return True
 
-    def act_place(self, ik_angles=None):
-        print("\n===== POSE 7 : ACT_PLACE =====")
+    def place_ik(self, ik_angles=None):
+        print("\n===== POSE 7 : place_ik =====")
         if ik_angles is None:
-            print("[오류] ACT_PLACE는 IK 값이 필요합니다.")
+            print("[오류] place_ik는 IK 값이 필요합니다.")
             return False
 
         print("[IK 사용] Place IK 값으로 이동")
         print_pose_angles(
-            "ACT_PLACE IK 각도",
+            "place_ik IK 각도",
             ik_angles["deg1"],
             ik_angles["deg23"],
             ik_angles["deg45"],
@@ -471,6 +478,9 @@ class RobotArm:
     # 메인 Pick & Place 시퀀스
     # ========================================================
     def execute_pick_and_place(self, ik_solver, label, pick, load, angle):
+        raise NotImplementedError("자동 적재 시퀀스 재작성 필요: 기존 포즈 삭제됨")
+
+    def _legacy_pick_and_place(self, ik_solver, label, pick, load, angle):
         px, py, pz = pick
         lx, ly, lz = load
 
@@ -495,10 +505,10 @@ class RobotArm:
         self.smooth_move_all_pose(angle_normalized, current_deg23, current_deg45, current_deg6, 0)
         time.sleep(0.5)
 
-        print("\n[SEQ 3] ACT_PICK")
+        print("\n[SEQ 3] pick_ik")
         pick_ik = ik_solver.calculate_pick_ik([px, py, pz])
         pick_ik["deg7"] = 10.0 + angle_normalized
-        self.act_pick(box_type=label, ik_angles=pick_ik)
+        self.pick_ik(box_type=label, ik_angles=pick_ik)
 
         print("\n[VACUUM ON]")
         self.vacuum_on()
@@ -517,7 +527,7 @@ class RobotArm:
         self.smooth_move_all_pose(90.0, 35.0, 120.0, current_deg6, 0)
         time.sleep(0.5)
 
-        print("\n[SEQ 7] ACT_PLACE")
+        print("\n[SEQ 7] place_ik")
         place_ik = ik_solver.calculate_place_ik([lx, ly, lz])
 
         print(f"[PLACE IK result]")
@@ -651,31 +661,31 @@ class RobotArm:
 
             deg1 = input_angle_or_command("ID1 단일", self.last_deg_1)
             if deg1 == "q": break
-            if deg1 == "O": self.return_to_initial(); continue
+            if deg1 == "O": self.reset(); continue
             if deg1 is not None: self.move_single_1(deg1)
             else: print("ID1 기존값 없음 → 이동 생략")
 
             deg23 = input_angle_or_command("ID2,3 동기화", self.last_deg_23)
             if deg23 == "q": break
-            if deg23 == "O": self.return_to_initial(); continue
+            if deg23 == "O": self.reset(); continue
             if deg23 is not None: self.move_sync_2_3(deg23)
             else: print("ID2,3 기존값 없음 → 이동 생략")
 
             deg45 = input_angle_or_command("ID4,5 동기화", self.last_deg_45)
             if deg45 == "q": break
-            if deg45 == "O": self.return_to_initial(); continue
+            if deg45 == "O": self.reset(); continue
             if deg45 is not None: self.move_sync_4_5(deg45)
             else: print("ID4,5 기존값 없음 → 이동 생략")
 
             deg6 = input_angle_or_command("ID6 단일", self.last_deg_6)
             if deg6 == "q": break
-            if deg6 == "O": self.return_to_initial(); continue
+            if deg6 == "O": self.reset(); continue
             if deg6 is not None: self.move_single_6(deg6)
             else: print("ID6 기존값 없음 → 이동 생략")
 
             deg7 = input_angle_or_command("ID7 단일", self.last_deg_7)
             if deg7 == "q": break
-            if deg7 == "O": self.return_to_initial(); continue
+            if deg7 == "O": self.reset(); continue
             if deg7 is not None: self.move_single_7(deg7)
             else: print("ID7 기존값 없음 → 이동 생략")
 
@@ -686,45 +696,31 @@ class RobotArm:
 
         while True:
             print("\n===== 포즈 선택 =====")
-            print("0 : safety_check")
-            print("1 : base")
-            print("2 : pick_ready")
-            print("3 : go_to_place")
-            print("4 : ACT_PICK, IK 입력")
-            print("5 : ROTATION, Base 45도")
-            print("6 : PLACE IK ORIGIN")
-            print("7 : ACT_PLACE, IK 입력")
-            print("8 : 현재 포지션 확인")
-            print("9 : 초기값 복귀")
-            print("q : 종료")
+            print("1 : pick_ik")
+            print("2 : rotation")
+            print("3 : place_ik")
+            print("4 : reset")
+            print("5 : ready")
+            print("6 : 종료")
 
             menu = input("선택 : ").strip().lower()
 
             if menu == "q":
                 break
-            elif menu == "0":
-                self.pose_0_safety_check()
             elif menu == "1":
-                self.pose_1_base()
-            elif menu == "2":
-                self.pose_2_pick_ready()
-            elif menu == "3":
-                self.pose_3_go_to_place()
-            elif menu == "4":
                 ik = input_ik_angles(default=make_ik_angles(0, 50, 75, INIT_DEG_6, 0))
-                self.act_pick(box_type="A_1", ik_angles=ik)
-            elif menu == "5":
-                self.rotation_mode(target_deg1=45)
-            elif menu == "6":
-                self.pose_6_place_origin()
-            elif menu == "7":
+                self.pick_ik(box_type="A_1", ik_angles=ik)
+            elif menu == "2":
+                self.rotation(target_deg1=90)
+            elif menu == "3":
                 ik = input_ik_angles(default=make_ik_angles(90, 40, 75, INIT_DEG_6, 0))
-                self.act_place(ik_angles=ik)
-            elif menu == "8":
-                self.print_all_old_positions()
-            elif menu == "9":
-                self.return_to_initial()
+                self.place_ik(ik_angles=ik)
+            elif menu == "4":
+                self.reset()
+            elif menu == "5":
+                self.ready()
             else:
+                
                 print("잘못된 입력")
 
 
@@ -759,8 +755,8 @@ def vacuum_off():
 def save_initial_positions():
     return get_default_arm().save_initial_positions()
 
-def return_to_initial():
-    return get_default_arm().return_to_initial()
+def reset():
+    return get_default_arm().reset()
 
 def print_all_old_positions():
     return get_default_arm().print_all_old_positions()
@@ -786,29 +782,23 @@ def move_all_pose(deg1, deg23, deg45, deg6, deg7):
 def smooth_move_all_pose(deg1, deg23, deg45, deg6, deg7):
     return get_default_arm().smooth_move_all_pose(deg1, deg23, deg45, deg6, deg7)
 
-def pose_0_safety_check():
-    return get_default_arm().pose_0_safety_check()
+def ready():
+    return get_default_arm().ready()
 
-def pose_1_base():
-    return get_default_arm().pose_1_base()
 
-def pose_2_pick_ready():
-    return get_default_arm().pose_2_pick_ready()
 
-def pose_3_go_to_place():
-    return get_default_arm().pose_3_go_to_place()
 
-def rotation_mode(target_deg1=45):
-    return get_default_arm().rotation_mode(target_deg1)
 
-def pose_6_place_origin():
-    return get_default_arm().pose_6_place_origin()
 
-def act_pick(box_type="A_1", ik_angles=None):
-    return get_default_arm().act_pick(box_type=box_type, ik_angles=ik_angles)
+def rotation(target_deg1=90):
+    return get_default_arm().rotation(target_deg1)
 
-def act_place(ik_angles=None):
-    return get_default_arm().act_place(ik_angles=ik_angles)
+
+def pick_ik(box_type="A_1", ik_angles=None):
+    return get_default_arm().pick_ik(box_type=box_type, ik_angles=ik_angles)
+
+def place_ik(ik_angles=None):
+    return get_default_arm().place_ik(ik_angles=ik_angles)
 
 
 def main():
@@ -838,3 +828,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
