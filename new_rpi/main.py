@@ -1,31 +1,23 @@
 #!/usr/bin/env python3
-"""Outline(ToF) -> BPP -> Receiver -> Pick/Place approximate IK preview.
-
-NO MOTOR COMMANDS: IK angles are calculated and printed only.
-Place Z out of measured planes uses nearest measured Z for preview ONLY.
-
-Your existing `outline.py` exposes live_outline_detection(picam2) and returns:
-  (angle_deg, [roi_center_dx_mm, roi_center_dy_mm, box_h_mm],
-   [long_side_mm, short_side_mm], box_h_mm)
-ROI offsets are relative to ROI center, +dx right in image, +dy downward.
-"""
+"""Operational BPP pick/place. Place LUT uses Base XY and bin-floor-referenced suction height."""
 from __future__ import annotations
 import math
-from multiprocessing import Process, Queue
+from multiprocessing import Process, Queue, Event
 from queue import Empty, Full
 
 ROI_CENTER_BASE_MM = (245.0, 0.0)  # XY of ROI center in robot Base frame
 CONVEYOR_Z_BASE_MM = 80.0           # conveyor top in robot Base frame
 # IMPORTANT: image axes relative to robot axes NOT independently calibrated.
 # Matrix maps [image right, image down] -> [robot X, robot Y].
-# Identity is provisional and is NOT validated for motor operation.
+# Identity is provisional and is NOT va
+#lidated for motor operation.
 IMAGE_TO_ROBOT_XY = ((1.0, 0.0), (0.0, 1.0))
-XY_TRANSFORM_CALIBRATED = True  # user verified robot-reference matching
+XY_TRANSFORM_CALIBRATED = True  # previous user verification; recheck after camera relocation
 
 # BPP local origin at bin corner; local +X/+Y/+Z toward robot -X/-Y/-Z.
 BIN_ORIGIN_BASE_MM = (110.0, -175.0, 0.0)
 BIN_AXIS_SIGNS = (-1.0, -1.0, -1.0)
-BIN_SIZE_MM = (250.0, 200.0, 200.0)  # width/depth/height
+BIN_SIZE_MM = (300.0, 200.0, 200.0)  # width/depth/height
 # Physical conflict: desired fixed Y/Z positive vs BPP base-frame Y/Z negative.
 # Do not equate these target types without verifying actual setup.
 FIXED_PLACE_TARGETS = {'A': (60.0, 285.0, 50.0),
@@ -57,13 +49,13 @@ def bpp_item_to_base(item):
     return [ox + sx * cx, oy + sy * cy, oz + sz * cz]
 
 
-def bpp_item_center_to_base(item):
-    """BPP lower corner -> box geometric center, using same Base transform."""
+def bpp_item_top_to_lut(item):
+    """Base XY at upper-face center; Z above bin floor (positive upward)."""
     ox, oy, oz = BIN_ORIGIN_BASE_MM
     sx, sy, sz = BIN_AXIS_SIGNS
     return [ox + sx * (float(item.x) + float(item.w) / 2),
             oy + sy * (float(item.y) + float(item.d) / 2),
-            oz + sz * (float(item.z) + float(item.h) / 2)]
+            float(item.z) + float(item.h)]
 
 
 def validate_outline(result):
@@ -96,13 +88,16 @@ def choose_mode():
 
 
 def run():
+    live = True
+    if not XY_TRANSFORM_CALIBRATED:
+        raise RuntimeError('카메라-로봇 좌표 변환 미확정')
     # Delay Raspberry Pi dependencies until after geometry helpers can be tested.
     from picamera2 import Picamera2
     import outline
     from outline import live_outline_detection
     from py3Dbp import Item, LiveBin
     from visualizer import BinVisualizer
-    from receiver import ik_preview_receiver
+    from receiver import motor_control_receiver
 
     # Verify exactly which outline module Python imports from the project.
     print(f"[MAIN] outline 모듈 경로: {outline.__file__}")
@@ -138,13 +133,13 @@ def run():
         vl53lxcx._find_file = _robot_find_file
     print("[MAIN] ToF 펌웨어 경로 보정 적용 완료")
 
-    mode = choose_mode()
+    mode = 'bpp'
     print('[MAIN] 좌표 원점: 로봇 Base; ROI 중심=', ROI_CENTER_BASE_MM,
           ', 컨베이어 Z=', CONVEYOR_Z_BASE_MM)
     if not XY_TRANSFORM_CALIBRATED:
         print('[참고] XY_TRANSFORM_CALIBRATED 플래그는 False이며, 사용자가 로봇 Base 좌표 일치를 확인했다고 전달했습니다.')
-    print('[주의] BPP +Z -> Base -Z, FIXED Y/Z는 양수. 설치 좌표 확인 필요.')
-    print('[안전] Queue -> receiver -> Pick/Place IK까지 테스트. 모터는 움직이지 않습니다.')
+    print('[MAIN] Place LUT: Base XY, 적재함 바닥 기준 윗면 Z (+)')
+    print("[MAIN] 실제 자동 파지/적재 모드")
 
     camera = None
     worker = None
@@ -152,6 +147,8 @@ def run():
     result_q = None
     bin_system = LiveBin(*BIN_SIZE_MM, max_weight=100)
     box_count = 0
+    motion_in_progress = False
+    stop_event = Event()
     try:
         camera = Picamera2()
         config = camera.create_preview_configuration(
@@ -162,9 +159,9 @@ def run():
 
         q = Queue(maxsize=5)
         result_q = Queue(maxsize=5)
-        worker = Process(target=ik_preview_receiver, args=(q, result_q), daemon=True)
+        worker = Process(target=motor_control_receiver, args=(q, result_q, stop_event), daemon=False)
         worker.start()
-        print('[MAIN] Receiver -> RobotIK 미리보기 시작 (모터 비구동)')
+        print("[MAIN] Receiver -> RobotIK -> MOTOR_CONTROL 포즈 연동")
 
         while True:
             cmd = input('\nOutline 인식 [Enter/y=시작, q=종료]: ').strip().lower()
@@ -196,7 +193,7 @@ def run():
                 continue
             bpp_load = bpp_item_to_base(item)
             load = list(FIXED_PLACE_TARGETS[label]) if mode == 'fixed' else bpp_load
-            place_ik_input = load if mode == 'fixed' else bpp_item_center_to_base(item)
+            place_ik_input = load if mode == 'fixed' else bpp_item_top_to_lut(item)
 
             payload = {
                 'packet_id': box_count + 1,
@@ -209,14 +206,14 @@ def run():
                 'box_size': {'w': round(width, 2), 'd': round(depth, 2), 'h': round(box_h, 2)},
                 'load_reference': 'box_center' if mode == 'fixed' else 'upper_face_center',
                 'place_ik_input': [round(v, 2) for v in place_ik_input],
-                'place_ik_reference': 'box_center',
+                'place_ik_reference': 'upper_face_bin_z',
             }
             print('\n[MAIN] ROI offset:', (dx, dy), 'mm; ToF height:', box_h, 'mm')
             print('[MAIN] Pick(Base):', pick)
             print('[MAIN] BPP corner:', (item.x, item.y, item.z))
             print('[MAIN] BPP target(Base):', bpp_load)
             print('[MAIN] Final load(Base):', load, '(mode:', mode, ')')
-            print('[MAIN] Place IK 입력(상자 중심, Base):', place_ik_input)
+            print('[MAIN] Place IK 입력(윗면 XY Base / Z 적재함 바닥):', place_ik_input)
             if mode == 'fixed':
                 print('[주의] FIXED 좌표는 BPP 결과와 별개이며 실제 적재를 검증하지 않습니다.')
             try:
@@ -243,31 +240,58 @@ def run():
             for name in ('pick_ik','place_ik'):
                 angles = answer.get(name)
                 if angles:
-                    print(f'[MAIN] {name} 관절각(미리보기):')
+                    print(f'[MAIN] {name} 관절각:')
                     for joint, value in angles.items():
                         print(f'    {joint}: {value:.2f} deg')
             details = answer.get('place_diagnostics') or {}
             if details.get('projected_xyz_mm'):
-                print('[MAIN] Place 실제 목표(상자 중심):', details.get('requested_xyz_mm'))
-                print('[MAIN] Place 조회에 사용한 가상 목표:', details['projected_xyz_mm'])
-                print('[MAIN] Z 차이:', details.get('z_difference_mm'), 'mm (보정값이 아님)')
+                print('[MAIN] Place 실제 목표(윗면 / LUT 좌표):', details.get('requested_xyz_mm'))
+                print('[MAIN] Place LUT 조회 목표:', details['projected_xyz_mm'])
+                print('[MAIN] Z 차이:', details.get('z_difference_mm'), 'mm')
             if details.get('contributors'):
                 print('[MAIN] 참조 실측점(IDW 가중치):', details['contributors'])
             for warning in details.get('warnings', []):
                 print('[MAIN/주의]', warning)
             if answer.get('error'):
                 print('[MAIN/오류]', answer['error'])
-            print('[MAIN] 모터 비구동 검증만 수행했습니다.')
+            if not answer.get('motor_approved'):
+                print('[MAIN] 실제 구동 차단:', answer.get('motor_block_reason', answer.get('error')))
+                break
+            motion_in_progress = True
+            q.put({'cmd': 'execute_cycle', 'packet_id': payload['packet_id']}, timeout=2)
+            try:
+                motion = result_q.get(timeout=320)
+            except Empty:
+                print('[MAIN] 동작 응답 없음. 물리적 비상정지 및 장비 확인 필요')
+                break
+            print('[MAIN] 자동 적재 결과:', motion)
+            if (motion.get('packet_id') != payload['packet_id'] or
+                    motion.get('status') != 'cycle_complete'):
+                print('[MAIN] 동작 중단. 적재 상태 수동 확인 필요')
+                break
+            motion_in_progress = False
+            print('[MAIN] 파지/적재/복귀 명령 완료 (흡착 확인 센서 없음)')
             box_count += 1
             bin_system.print_state()
     finally:
+        stop_event.set()
+        if motion_in_progress:
+            print('[MAIN] 물체를 지지하고 실제 장비를 안전 상태로 만든 후 종료하세요. 자동 진공 해제 금지.')
+            if worker is not None and worker.is_alive():
+                # Avoid closing vacuum hardware over an unsupported suspended load.
+                try:
+                    while input('장비 안전 확보 후 SAFE 입력: ').strip() != 'SAFE':
+                        pass
+                except (EOFError, KeyboardInterrupt):
+                    print('[MAIN] 안전 확인 실패: 물리적 장비 상태 확인 필요')
         if q is not None and worker is not None:
             try:
-                q.put({'cmd': 'shutdown'}, timeout=2)
+                q.put({'cmd': 'shutdown', 'preserve_vacuum': motion_in_progress}, timeout=2)
             except Full:
                 print('[MAIN] 종료 패킷 전송 실패')
-            worker.join(timeout=3)
+            worker.join(timeout=320 if motion_in_progress else 30)
             if worker.is_alive():
+                print("[MAIN] 프로세스 종료는 물리적 비상정지가 아닙니다. 장비 확인 필요")
                 worker.terminate()
                 worker.join(timeout=2)
             q.close()
